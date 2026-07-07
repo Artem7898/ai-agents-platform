@@ -62,7 +62,7 @@ ai-agents-platform/
 ### 1. Клонирование и настройка
 
 ```bash
-git clone https://github.com/your-org/ai-agents-platform.git
+git clone https://github.com/Artem7898/ai-agents-platform
 cd ai-agents-platform
 ```
 
@@ -77,7 +77,7 @@ uv pip install -e ".[dev]"
 > ⚠️ **Важно:** Пакет `django-nova` берётся напрямую из GitHub https://github.com/Artem7898/django-nova (на PyPI лежит битая заглушка).
 > Если вы используете свой форк `django-nova`, измените строку в `pyproject.toml`:
 > ```toml
-> "django-nova @ git+https://github.com/<ваш-username>/<ваш-форк>.git"
+> "https://github.com/Artem7898/django-nova"
 > ```
 
 ---
@@ -202,4 +202,4 @@ GET /api/v2/runs/{run_id}
 
 ## 📄 Лицензия
 
-MIT © [your-org](https://github.com/your-org)
+MIT © [Artem Alimpiev ](https://github.com/Artem7898)
