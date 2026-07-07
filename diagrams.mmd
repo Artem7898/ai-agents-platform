@@ -1,0 +1,112 @@
+%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#1f6feb', 'primaryTextColor': '#c9d1d9', 'primaryBorderColor': '#30363d', 'lineColor': '#8b949e', 'secondaryColor': '#238636', 'tertiaryColor': '#f0883e', 'fontFamily': 'Segoe UI, Roboto, Helvetica, Arial, sans-serif'}}}%%
+
+graph TD
+    %% ==================== STYLES ====================
+    classDef client fill:#58a6ff,stroke:#1f6feb,color:#0d1117,stroke-width:2px
+    classDef gateway fill:#7ee787,stroke:#2ea043,color:#0d1117,stroke-width:2px
+    classDef django fill:#238636,stroke:#2ea043,color:#fff,stroke-width:2px
+    classDef fastapi fill:#2ea043,stroke:#3fb950,color:#fff,stroke-width:2px
+    classDef worker fill:#f0883e,stroke:#da3633,color:#fff,stroke-width:2px
+    classDef dag fill:#a371f7,stroke:#8957e5,color:#fff,stroke-width:2px
+    classDef infra fill:#484f58,stroke:#6e7681,color:#fff,stroke-width:1px
+    classDef endpoint fill:#1f6feb,stroke:#58a6ff,color:#fff,stroke-width:2px
+    classDef final fill:#238636,stroke:#3fb950,color:#fff,stroke-width:2px
+    classDef event fill:#da3633,stroke:#f85149,color:#fff,stroke-width:2px
+
+    %% ==================== CLIENT LAYER ====================
+    Client([Frontend / Client]):::client
+
+    %% ==================== API GATEWAY (Uvicorn) ====================
+    subgraph Uvicorn["🔧 API Gateway — Uvicorn (Hybrid ASGI)"]
+        direction LR
+
+        %% ==================== DJANGO DRF (Synchronous CRUD) ====================
+        subgraph Django_DRF["🐍 Django DRF — Синхронный CRUD /api/v1/"]
+            direction TB
+            DRF_URL["/api/v1/"]:::endpoint
+            ViewSets["AgentViewSet
+WorkflowViewSet"]:::django
+            DRF_Serializer["to_drf_serializer()"]:::django
+            DjangoORM["Django ORM
+(SQLite / PostgreSQL)"]:::infra
+
+            DRF_URL --> ViewSets
+            ViewSets --> DRF_Serializer
+            DRF_Serializer --> DjangoORM
+        end
+
+        %% ==================== FASTAPI (Async Execution) ====================
+        subgraph FastAPI_Async["⚡ FastAPI — Асинхронное выполнение /api/v2/"]
+            direction TB
+            FASTAPI_URL["/api/v2/"]:::endpoint
+            RunController["POST /api/v2/runs/execute"]:::fastapi
+            PollController["GET /api/v2/runs/{run_id}"]:::fastapi
+
+            FASTAPI_URL --> RunController
+            FASTAPI_URL --> PollController
+
+            %% ==================== BACKGROUND WORKER ====================
+            subgraph BackgroundWorker["🔥 Background Worker — Event Sourcing & DAG Execution"]
+                direction TB
+                WorkflowExecutor["WorkflowExecutor"]:::worker
+                AGetRun["await aget(Run)"]:::infra
+                TaskGroup["asyncio.TaskGroup
+_concurrent node execution_"]:::worker
+
+                WorkflowExecutor --> AGetRun
+                WorkflowExecutor --> TaskGroup
+
+                %% ==================== DAG EXECUTION ====================
+                subgraph DAG_Execution["🧬 DAG Execution — Асинхронный параллелизм"]
+                    direction TB
+
+                    LLMService["LLMService
+Agent Loop: Tool Calling"]:::dag
+                    AsyncOpenAI["AsyncOpenAI
+(Singleton + Connection Pool)"]:::infra
+                    ToolRegistry["ToolRegistry
+.execute(tool_name, args)"]:::dag
+                    ToolExecutors["ToolRegistry
+._executors[dict]"]:::infra
+
+                    %% Agent Loop arrows
+                    LLMService -->|"1. Запрос к LLM"| AsyncOpenAI
+                    AsyncOpenAI -->|"2. Ответ / вызов инструмента"| LLMService
+                    LLMService -->|"3. Вызови инструмент"| ToolRegistry
+                    ToolRegistry -->|"4. Диспатч"| ToolExecutors
+                    ToolExecutors -->|"5. Результат в контекст"| LLMService
+                    LLMService -->|"6. Финальный ответ"| TaskGroup
+                end
+
+                TaskGroup -->|"execute_node()"| LLMService
+                TaskGroup -->|"execute_tool()"| ToolRegistry
+
+                %% Event Sourcing & Finalization
+                StatusUpdate["status: COMPLETED"]:::final
+                EventAppend["Event: NODE_EXIT
+_append_event()"]:::event
+
+                WorkflowExecutor -->|"aupdate_fields"| StatusUpdate
+                WorkflowExecutor -->|"_append_event"| EventAppend
+            end
+
+            RunController -->|"asyncio.create_task()
+_запуск в фоне_"| BackgroundWorker
+        end
+    end
+
+    %% ==================== EXTERNAL FLOW ====================
+    Client -->|"HTTP Request"| Uvicorn
+    RunController -->|"202 Accepted
+{ run_id, status: PENDING }"| Client
+    PollController -->|"200 OK
+{ status, events[] }"| Client
+
+    %% ==================== NOTES ====================
+    subgraph Legend["📋 Легенда"]
+        direction LR
+        Note1["🔵 Синие = HTTP запросы"]:::client
+        Note2["🟠 Оранжевые = async фоновые задачи"]:::worker
+        Note3["🟢 Зелёные = завершение / успех"]:::final
+        Note4["🔴 Красные = события Event Sourcing"]:::event
+    end
