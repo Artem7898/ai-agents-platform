@@ -62,7 +62,7 @@ ai-agents-platform/
 ### 1. Clone and setup
 
 ```bash
-git clone https://github.com/your-org/ai-agents-platform.git
+git clone https://github.com/Artem7898/ai-agents-platform
 cd ai-agents-platform
 ```
 
