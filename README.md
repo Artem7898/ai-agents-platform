@@ -157,4 +157,4 @@ GET /api/v2/runs/{run_id}
 
 ## 📄 License
 
-MIT © [Artem Alimpiev]([https://github.com/Artem7898 )
+MIT © [Artem Alimpiev ](https://github.com/Artem7898)
