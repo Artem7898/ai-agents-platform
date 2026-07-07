@@ -140,49 +140,7 @@ pytest tests/integration/ -v --reuse-db
 
 ## 🔄 Схема выполнения
 
-```mermaid
-graph TD
-    Client(Frontend) --> Uvicorn[Hybrid ASGI]
 
-    subgraph Uvicorn[API Gateway]
-        direction LR
-
-        subgraph Django_DRF [Синхронный CRUD]
-            DRF_URL["/api/v1/"]
-            DRF_URL --> ViewSets(AgentViewSet)
-            ViewSets --> to_drf_serializer
-            to_drf_serializer --> to_django_orm
-        end
-
-        subgraph FastAPI_Async [Асинхронное выполнение и SSE]
-            FASTAPI_URL["/api/v2/"]
-            FASTAPI_URL --> RunController[/api/v2/runs/execute]
-            RunController -->|Return 202 Accepted & Run ID| Client
-            RunController --> asyncio.create_task(_run_background)
-
-            subgraph BackgroundWorker [Event Sourcing & DAG Execution]
-                BackgroundWorker --> WorkflowExecutor
-                WorkflowExecutor --> aget(Run)
-                WorkflowExecutor --> TaskGroup[_execute_node]
-
-                subgraph DAG_Execution [Асинхронный параллелизм]
-                    TaskGroup --> LLMService[Agent Loop: Tool Calling]
-                    LLMService --> AsyncOpenAI
-                    AsyncOpenAI --> LLMService
-                    LLMService -- "Вызови инструмент" --> TaskGroup
-                    TaskGroup --> ToolRegistry.execute()
-                    ToolRegistry --> ToolRegistry._executors
-                    ToolRegistry -- "Вернуть результат в контекст" --> LLMService
-                    LLMService -- "Финальный ответ" --> TaskGroup
-                end
-
-                WorkflowExecutor --> aupdate_fields[status: COMPLETED]
-                WorkflowExecutor --> _append_event[Event: NODE_EXIT]
-            end
-       end 
-    end
-
-```
 
 ---
 
