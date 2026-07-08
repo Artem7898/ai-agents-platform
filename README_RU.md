@@ -62,7 +62,7 @@ ai-agents-platform/
 ### 1. Клонирование и настройка
 
 ```bash
-git clone https://github.com/Artem7898/ai-agents-platform
+git clone https://github.com/your-org/ai-agents-platform.git
 cd ai-agents-platform
 ```
 
@@ -77,8 +77,7 @@ uv pip install -e ".[dev]"
 > ⚠️ **Важно:** Пакет `django-nova` берётся напрямую из GitHub https://github.com/Artem7898/django-nova (на PyPI лежит битая заглушка).
 > Если вы используете свой форк `django-nova`, измените строку в `pyproject.toml`:
 > ```toml
-> "https://github.com/Artem7898/django-nova"
-> 
+> "django-nova @ git+https://github.com/<ваш-username>/<ваш-форк>.git"
 > ```
 
 ---
@@ -141,9 +140,51 @@ pytest tests/integration/ -v --reuse-db
 
 ## 🔄 Схема выполнения
 
+```mermaid
+graph TD
+    Client(Frontend) --> Uvicorn[Hybrid ASGI]
 
+    subgraph Uvicorn[API Gateway]
+        direction LR
 
+        subgraph Django_DRF [Синхронный CRUD]
+            DRF_URL["/api/v1/"]
+            DRF_URL --> ViewSets(AgentViewSet)
+            ViewSets --> to_drf_serializer
+            to_drf_serializer --> to_django_orm
+        end
 
+        subgraph FastAPI_Async [Асинхронное выполнение и SSE]
+            FASTAPI_URL["/api/v2/"]
+            FASTAPI_URL --> RunController[/api/v2/runs/execute]
+            RunController -->|Return 202 Accepted & Run ID| Client
+            RunController --> asyncio.create_task(_run_background)
+
+            subgraph BackgroundWorker [Event Sourcing & DAG Execution]
+                BackgroundWorker --> WorkflowExecutor
+                WorkflowExecutor --> aget(Run)
+                WorkflowExecutor --> TaskGroup[_execute_node]
+
+                subgraph DAG_Execution [Асинхронный параллелизм]
+                    TaskGroup --> LLMService[Agent Loop: Tool Calling]
+                    LLMService --> AsyncOpenAI
+                    AsyncOpenAI --> LLMService
+                    LLMService -- "Вызови инструмент" --> TaskGroup
+                    TaskGroup --> ToolRegistry.execute()
+                    ToolRegistry --> ToolRegistry._executors
+                    ToolRegistry -- "Вернуть результат в контекст" --> LLMService
+                    LLMService -- "Финальный ответ" --> TaskGroup
+                end
+
+                WorkflowExecutor --> aupdate_fields[status: COMPLETED]
+                WorkflowExecutor --> _append_event[Event: NODE_EXIT]
+            end
+       end 
+    end
+
+```
+
+---
 
 ## 📡 Примеры API
 
@@ -155,11 +196,10 @@ POST /api/v2/runs/execute
 # Получение статуса и событий
 GET /api/v2/runs/{run_id}
 # → { "status": "RUNNING", "events": [...] }
-
 ```
 
-
+---
 
 ## 📄 Лицензия
 
-MIT © [Artem Alimpiev ](https://github.com/Artem7898)
+MIT © [your-org](https://github.com/your-org)

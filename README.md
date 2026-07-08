@@ -62,7 +62,7 @@ ai-agents-platform/
 ### 1. Clone and setup
 
 ```bash
-git clone https://github.com/Artem7898/ai-agents-platform
+git clone https://github.com/your-org/ai-agents-platform.git
 cd ai-agents-platform
 ```
 
@@ -77,8 +77,7 @@ uv pip install -e ".[dev]"
 > ⚠️ **Important:** The `django-nova` package is pulled directly from GitHub (the PyPI version is a broken stub).
 > If you are using your own fork of `django-nova`, change the line in `pyproject.toml` to:
 > ```toml
-> "https://github.com/Artem7898/django-nova" 
-> 
+> "django-nova @ git+https://github.com/<your-username>/<your-fork>.git"
 > ```
 
 ---
@@ -141,7 +140,47 @@ pytest tests/integration/ -v --reuse-db
 
 ## 🔄 Execution Flow
 
+```mermaid
+graph TD
+    Client(Frontend) --> Uvicorn[Hybrid ASGI]
 
+    subgraph Uvicorn[API Gateway]
+        direction LR
+
+        subgraph Django_DRF [Synchronous CRUD]
+            DRF_URL["/api/v1/"]
+            DRF_URL --> ViewSets(AgentViewSet)
+            ViewSets --> to_drf_serializer
+            to_drf_serializer --> to_django_orm
+        end
+
+        subgraph FastAPI_Async [Async Execution & SSE]
+            FASTAPI_URL["/api/v2/"]
+            FASTAPI_URL --> RunController[/api/v2/runs/execute]
+            RunController -->|Return 202 Accepted & Run ID| Client
+            RunController --> asyncio.create_task(_run_background)
+
+            subgraph BackgroundWorker [Event Sourcing & DAG Execution]
+                BackgroundWorker --> WorkflowExecutor
+                WorkflowExecutor --> aget(Run)
+                WorkflowExecutor --> TaskGroup[_execute_node]
+
+                subgraph DAG_Execution [Async Parallelism]
+                    TaskGroup --> LLMService[Agent Loop: Tool Calling]
+                    LLMService --> AsyncOpenAI
+                    AsyncOpenAI --> LLMService
+                    LLMService -- "Call tool" --> TaskGroup
+                    TaskGroup --> ToolRegistry.execute()
+                    ToolRegistry --> ToolRegistry._executors
+                    ToolRegistry -- "Return result to context" --> LLMService
+                    LLMService -- "Final answer" --> TaskGroup
+                end
+
+                WorkflowExecutor --> aupdate_fields[status: COMPLETED]
+                WorkflowExecutor --> _append_event[Event: NODE_EXIT]
+            end
+        end
+    end
 ```
 
 ---
@@ -162,4 +201,4 @@ GET /api/v2/runs/{run_id}
 
 ## 📄 License
 
-MIT © [Artem Alimpiev](https://github.com/Artem7898)
+MIT © [your-org](https://github.com/your-org)
