@@ -22,10 +22,12 @@ async def test_activate_agent_success(agent_factory):
     # Act
     activated_spec = await service.activate_agent(agent.id)
 
-    # Assert
-    assert activated_spec.status == AgentStatus.ACTIVE
+    # Assert: Убрали проверку activated_spec.status, так как AgentSpec не содержит статус
+    # Вместо этого проверяем, что to_spec() отработал и вернул правильные данные конфигурации
+    assert activated_spec.id == agent.id
+    assert activated_spec.system_prompt == "Valid prompt"
 
-    # Проверяем, что изменения сохранились в БД
+    # Проверяем, что изменения сохранились в БД (ЭТОГО ДОСТАТОЧНО ДЛЯ ПРОВЕРКИ СТАТУСА)
     from src.agents.models import Agent
     updated_agent = await Agent.objects.aget(id=agent.id)
     assert updated_agent.status == AgentStatus.ACTIVE.value
@@ -43,7 +45,7 @@ async def test_activate_agent_not_found():
 
 
 @pytest.mark.asyncio
-@pytest.mark.django.db(transaction=True)
+@pytest.mark.django_db(transaction=True)
 async def test_activate_agent_without_tools_fails(agent_factory):
     """Use-case: нельзя активировать агента без инструментов."""
     agent = await agent_factory(

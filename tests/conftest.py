@@ -1,5 +1,5 @@
 import uuid
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable
 
 import pytest
 import pytest_asyncio
@@ -30,7 +30,7 @@ async def async_db(db):
 # 2. FACTORY FIXTURES (Адаптированы под текущие модели)
 # ==============================================================================
 @pytest_asyncio.fixture
-async def agent_factory(async_db) -> callable:
+async def agent_factory(async_db) -> Callable:
     """Factory для создания тестовых агентов в БД."""
 
     async def _create_agent(**kwargs) -> Agent:
@@ -44,6 +44,8 @@ async def agent_factory(async_db) -> callable:
             "tool_ids": [],
         }
         defaults.update(kwargs)
+
+        # ИСПРАВЛЕНО: Создаем ORM модель, а не вызываем фикстуру рекурсивно
         agent = Agent(**defaults)
         await agent.asave()
         return agent
@@ -52,7 +54,7 @@ async def agent_factory(async_db) -> callable:
 
 
 @pytest_asyncio.fixture
-async def workflow_factory(async_db) -> callable:
+async def workflow_factory(async_db) -> Callable:
     """Factory для создания тестовых workflow в БД."""
 
     async def _create_workflow(**kwargs) -> Workflow:
@@ -117,9 +119,9 @@ def agent_spec() -> AgentSpec:
     """Тестовая Pydantic-спека агента (соответствует текущей схеме)."""
     return AgentSpec(
         name="Test Agent",
-        model_name="gpt-4o",      # ИСПРАВЛЕНО
+        model_name="gpt-4o",
         system_prompt="You are a test assistant.",
-        temperature=0.7,           # ИСПРАВЛЕНО
+        temperature=0.7,
         tool_ids=[uuid.uuid4()],
     )
 
