@@ -32,12 +32,32 @@ class RunRequest(BaseModel):
         description="Входные данные для стартового узла DAG (например, {'prompt': '...'})"
     )
 
-    
+
+class OutboxStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class OutboxMessageSpec(BaseModel):
+    """
+    Схема для системной таблицы Outbox.
+    Extra="forbid" защищает от случайного мусора в payload.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: UUID4 = Field(default_factory=uuid.uuid4)
+    topic: str = Field(..., description="Тип команды, например 'run_workflow'")
+    payload: dict[str, Any] = Field(..., description="JSON payload с входными данными")
+    status: OutboxStatus = OutboxStatus.PENDING
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    locked_at: datetime | None = None
+
 
 
 class NodeKind:
     pass
 
-
 class EventType:
-    pass
+    HITL_WAITING = "hitl_waiting"

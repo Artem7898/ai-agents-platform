@@ -1,133 +1,92 @@
 """
-FastAPI Controllers.
-Слой маршрутизации для High-load и Streaming эндпоинтов.
+FastAPI Routers (Execution & Streaming Layer).
 """
-import asyncio
 import uuid
-from datetime import datetime
-from typing import Any
+from django.db import transaction
+from fastapi import APIRouter, HTTPException
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
-
-from src.workflows.models import Workflow
 from src.runs.models import WorkflowRun
-from src.runs.schemas import RunRequest, RunStatus
+from src.runs.outbox import OutboxPublisher
 from src.runs.executor import WorkflowExecutor
+from django.core.exceptions import ObjectDoesNotExist
 
-import structlog
-
-log = structlog.get_logger()
-
-# Маршрутизатор с префиксом (монтируется в config/asgi.py)
-fastapi_router = APIRouter(prefix="/api/v2", tags=["execution"])
+fastapi_router = APIRouter(tags=["Workflow Execution"])
 
 
-# ============================================================================
-# RESPONSE SCHEMAS (DTOs)
-# ============================================================================
+@fastapi_router.post("/runs/execute", status_code=202)
+async def execute_workflow(body: dict):
+    workflow_id_str = body.get("workflow_id")
+    if not workflow_id_str:
+        raise HTTPException(status_code=400, detail="Missing 'workflow_id'")
 
-class RunResponse(BaseModel):
-    """DTO для мгновенного ответа при старте."""
-    run_id: uuid.UUID
-    workflow_id: uuid.UUID
-    status: str
-
-
-class RunStatusResponse(BaseModel):
-    """
-    DTO для чтения состояния фонового выполнения (Polling).
-    Содержит чистые бизнес-данные, скрытая инфраструктура отсечена.
-    """
-    run_id: uuid.UUID
-    workflow_id: uuid.UUID
-    status: str  # Текущий статус (PENDING, RUNNING, COMPLETED, FAILED)
-    input_data: dict[str, Any]
-    output_data: dict[str, Any] | None = None
-    events: list[dict[str, Any]] = []  # Распарсенный JSON массив событий (Time-Travel)
-
-
-# ============================================================================
-# CONTROLLERS
-# ============================================================================
-
-@fastapi_router.post("/runs/execute", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
-async def execute_workflow_run(request: RunRequest):
-    """Запускает выполнение Workflow в фоновом режиме."""
     try:
-        workflow = await Workflow.objects.aget(id=request.workflow_id)
-    except Workflow.DoesNotExist:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow {request.workflow_id} not found"
+        workflow_id = uuid.UUID(workflow_id_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+
+    async with transaction.atomic():
+        run = WorkflowRun(
+            id=uuid.uuid4(),
+            workflow_id=workflow_id,
+            status="pending",
+            input_data=body.get("input_data", {}),
+            events=[]
+        )
+        await run.asave()
+
+        await OutboxPublisher.publish(
+            topic="run_workflow",
+            payload={"run_id": str(run.id)}
         )
 
-    run = await WorkflowRun.objects.acreate(
-        workflow=workflow,
-        status=RunStatus.PENDING.value,
-        input_data=request.input_data
-    )
-
-    # Запускаем в фоне
-    asyncio.create_task(_run_workflow_background_task(run.id))
-
-    log.info("workflow_run_accepted", run_id=str(run.id), workflow_id=str(workflow.id))
-    return RunResponse(
-        run_id=run.id,
-        workflow_id=workflow.id,
-        status=RunStatus.PENDING.value
-    )
+    return {
+        "run_id": str(run.id),
+        "status": "pending"
+    }
 
 
-@fastapi_router.get("/runs/{run_id}", response_model=RunStatusResponse)
-async def get_run_status(run_id: uuid.UUID):
+@fastapi_router.post("/runs/{run_id}/resume", status_code=202)
+async def resume_workflow(run_id: uuid.UUID, body: dict):
     """
-    Возвращает текущий статус и результаты фонового выполнения.
+    Этап 3 ТЗ: Human-in-the-loop (HITL).
+    Достает контекст из БД и перезапускает executor с нужного места графа.
+    """
+    human_input = body.get("input", {})
 
-    Используется клиентом для Polling (опроса состояния).
-    Возвращает события из JSONB поля для отрисовки Time-Travel отладки в UI.
+    executor = WorkflowExecutor(run_id=run_id)
+
+    try:
+        # В проде (Этап 2) это тоже должно идти через Outbox,
+        # но для текущей архитектуры запускаем корутину напрямую
+        await executor.resume(human_input)
+        return {"run_id": str(run_id), "status": "resumed"}
+    except ObjectDoesNotExist:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@fastapi_router.get("/runs/{run_id}/events")
+async def get_run_events(run_id: uuid.UUID):
+    """
+    Этап 4 ТЗ: Time-Travel Debugging API.
+    Отдает массив событий для отрисовки Timeline на фронтенде.
+    Каждое событие содержит context_snapshot, позволяя увидеть
+    состояние памяти графа на любом шаге без пересчета.
     """
     try:
-        # Используем aget для асинхронного запроса к БД
-        run = await WorkflowRun.objects.aget(id=run_id)
+        # Оптимизация БД: выбираем ТОЛЬКО нужные поля (не дергаем тяжелый workflow)
+        run = await WorkflowRun.objects.values(
+            "id", "status", "events", "created_at"
+        ).aget(id=run_id)
 
-        return RunStatusResponse(
-            run_id=run.id,
-            workflow_id=run.workflow_id,
-            status=run.status,
-            input_data=run.input_data,
-            output_data=run.output_data,
-            # Если events хранятся как JSON-строка, конвертируем в список объектов
-            events=run.events if isinstance(run.events, list) else []
-        )
+        return {
+            "run_id": str(run["id"]),
+            "status": run["status"],
+            "created_at": run["created_at"].isoformat(),
+            "events": run["events"]  # Прямая отдача JSONB массива
+        }
 
-    except WorkflowRun.DoesNotExist:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"WorkflowRun {run_id} not found"
-        )
-
-
-# ============================================================================
-# BACKGROUND WORKER
-# ============================================================================
-
-async def _run_workflow_background_task(run_id: uuid.UUID):
-    """Фоновая задача выполнения DAG."""
-    try:
-        executor = WorkflowExecutor(run_id)
-        await executor.execute()
-    except Exception as e:
-        log.exception("background_task_failed", run_id=str(run_id), error=str(e))
-        try:
-            run = await WorkflowRun.objects.aget(id=run_id)
-            run.status = RunStatus.FAILED.value
-            run.events.append({
-                "id": str(uuid.uuid4()),
-                "type": "system_error",
-                "payload": {"error": str(e)},
-                "timestamp": datetime.utcnow().isoformat()
-            })
-            await run.asave(update_fields=["status", "events"])
-        except Exception:
-            log.critical("failed_to_update_run_status_on_error", run_id=str(run_id))
+    except ObjectDoesNotExist:
+        raise HTTPException(status_code=404, detail=f"WorkflowRun {run_id} not found")
