@@ -1,163 +1,128 @@
-# AI Multi-Agent Workflow Platform
+# AI Agents Platform
 
-<p align="center">
-  <img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/django-5.x-green.svg" alt="Django 5.x">
-  <img src="https://img.shields.io/badge/fastapi-latest-teal.svg" alt="FastAPI">
-  <img src="https://img.shields.io/badge/pydantic-v2-e92063.svg" alt="Pydantic v2">
-  <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License: MIT">
-  <img src="https://img.shields.io/badge/tests-pytest-brightgreen.svg" alt="Tests: pytest">
-</p>
+Backend для сохраняемых AI workflow: Django 5.2 LTS, DRF для CRUD, FastAPI для команд исполнения, PostgreSQL и отдельный outbox worker. Требуется Python 3.12 или новее.
 
-<p align="center">
-  <b>Продакшн-решение для оркестрации AI-агентов и LLM-воркфлоу: async-first, event-driven backend.</b>
-</p>
+Это основа для выполнения графов с аутентификацией, checkpoint и восстановлением задач. Повторная доставка команды не гарантирует однократный внешний эффект: инструменты, которые меняют сторонние системы, должны поддерживать идемпотентность. Показатели задержки, пропускной способности и доступности необходимо измерять в конкретной среде.
 
-Построен на **Django 5.x** и **django-nova** с гарантией строгой типизации, zero-downtime деплоев и глубокой наблюдаемости.
+[English](README.md) · [Эксплуатация и восстановление](docs/operations.md)
 
----
+## Локальный запуск
 
-## 🚀 Ключевые достижения
+Установите [uv](https://docs.astral.sh/uv/), Docker и Compose:
 
-| Фича | Описание |
-|------|----------|
-| **Реальный пакет Django Nova** | Используется кастомный пакет `django-nova` с GitHub (не заглушка с PyPI). Реализован паттерн **Single Source of Truth (SSOT)** через строгие Pydantic v2 схемы. |
-| **Строгая DDD-архитектура** | Домены разделены на `schemas.py` (Pydantic DTO), `models.py` (ORM State), `services.py` (Business Logic) и `api/` (Controllers). Строгая изоляция слоёв. |
-| **Гибридный ASGI-роутер** | В `config/asgi.py` реализовано разделение: **DRF** обрабатывает CRUD (`/api/v1/`), **FastAPI** — Execution/Streaming (`/api/v2/`). |
-| **Event Sourcing (Time-Travel)** | В `WorkflowRun` хранятся все шаги в JSONB-массиве `events`. Позволяет откатить состояние запуска на любой шаг. |
-| **Async-First Execution** | В `WorkflowExecutor` используется `asyncio.TaskGroup` для конкурентного выполнения независимых веток DAG без оверхеда Celery. |
-| **Agent Loop (Tool Calling)** | Реализован бесконечный цикл: LLM просит инструмент → Реестр выполняет → Результат возвращается в LLM → LLM выдаёт финальный ответ. |
-| **Строгая Pydantic-валидация** | `extra="forbid"` — запрещаем LLM-галлюцинации на уровне ORM. Невалидный JSON никогда не попадёт в БД. |
-| **Connection Pooling** | В `LLMService` используется модульный синглтон `AsyncOpenAI`, сохраняющий TCP-соединения (NFR: p95 first-token < 800ms). |
-| **Accepted & Go Pattern** | Контроллер запуска (`POST /api/v2/runs/execute`) возвращает **202 Accepted** мгновенно, а выполнение стартует через `asyncio.create_task`. |
-| **Polling API** | `GET /api/v2/runs/{run_id}` возвращает статус и историю событий для UI. |
-
----
-
-## 📁 Архитектура проекта
-
-Строгая изоляция доменов (DDD) и явное разделение Django (State) и Pydantic (DTO).
-
-```
-ai-agents-platform/
-├── config/              # Настройки Django (Hybrid ASGI, Uvicorn)
-├── src/                 # Исходный код (PYTHONPATH)
-│   ├── core/            # Инфраструктура: OpenTelemetry, логирование
-│   ├── agents/          # Домен: Агенты (SSOT: AgentSpec)
-│   ├── workflows/       # Домен: Воркфлоу (SSOT: WorkflowSpec, NodeKind)
-│   ├── runs/            # Домен: Запуски (Event Sourcing: WorkflowRunSpec, EventType)
-│   └── api/             # Слой представления (Controllers)
-│       ├── drf/         # DRF ViewSets (через to_drf_serializer)
-│       └── fastapi/     # FastAPI Routers (Execution, Polling)
-└── tests/               # Тесты (pytest + pytest-asyncio + respx)
-    ├── unit/            # Тесты схем, tool_registry (без БД)
-    ├── integration/     # Тесты сервисов, API (с тестовой БД)
-    └── e2e/             # Тесты API и LLM-интеграции (через моки)
-```
-
----
-
-## 🚀 Быстрый старт
-
-### 1. Клонирование и настройка
-
-```bash
-git clone https://github.com/Artem7898/ai-agents-platform
+```sh
+git clone https://github.com/Artem7898/ai-agents-platform.git
 cd ai-agents-platform
+cp .env.example .env
+uv sync --frozen --extra dev
+docker compose up -d postgres
+uv run --frozen python manage.py migrate
+uv run --frozen python manage.py createsuperuser
+uv run --frozen python manage.py drf_create_token YOUR_USERNAME
 ```
 
-### 2. Создание окружения и установка зависимостей (через `uv`)
+`uv.lock` фиксирует зависимости и Git-коммит Nova. Реальные ключи и пароли храните вне Git. Для настоящих LLM-запросов задайте `OPENAI_API_KEY` в локальном `.env`; тесты используют моки.
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
+Запустите web и worker в разных терминалах:
+
+```sh
+uv run --frozen uvicorn config.asgi:application --host 127.0.0.1 --port 8000 --reload
 ```
 
-> ⚠️ **Важно:** Пакет `django-nova` берётся напрямую из GitHub https://github.com/Artem7898/django-nova (на PyPI лежит битая заглушка).
-> Если вы используете свой форк `django-nova`, измените строку в `pyproject.toml`:
-> ```toml
-> "https://github.com/Artem7898/django-nova"
-> ```
-
----
-
-## ▶️ Как запустить (Development)
-
-Для локальной разработки используем **SQLite** (чтобы не поднимать Docker) и **Uvicorn** для поддержки гибридного ASGI.
-
-```bash
-# Применить миграции и запустить сервер
-python manage.py migrate
-uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --reload
+```sh
+uv run --frozen python manage.py runworker
 ```
 
-### 🐳 Альтернатива: Production (через реальную БД)
+Без worker команды остаются в очереди. Для проверки блокировок и восстановления с несколькими worker используйте PostgreSQL. SQLite подходит только для упрощённой локальной работы и тестов.
 
-```bash
-DJANGO_SETTINGS_MODULE=config.settings.dev_postgres   uvicorn config.asgi:application --host 0.0.0.0 --port 8000
+Полный локальный запуск в контейнерах:
+
+```sh
+cp .env.example .env
+docker compose up --build -d
+docker compose exec web python manage.py createsuperuser
+docker compose exec web python manage.py drf_create_token YOUR_USERNAME
 ```
 
----
+Compose открывает HTTP и PostgreSQL только на loopback. В нём используются локальные тестовые реквизиты БД; для production нужна отдельная конфигурация.
 
-## 🧪 Как запускать тесты
+## Доступ и API
 
-В проекте используется **pytest** с плагинами `pytest-asyncio` и `respx`.
+Оба API требуют заголовок `Authorization: Token <ключ>`. Сессия `/admin/` не заменяет API-токен. Обычный пользователь работает со своими агентами и workflow; staff может управлять общими и существующими legacy-объектами. Вне localhost используйте HTTPS.
 
-```bash
-# Все тесты (Unit + Integration + E2E)
-pytest tests/ -v --cov=src --cov-report=term-missing
+- `/api/v1/agents/` — CRUD агентов.
+- `/api/v1/workflows/` — CRUD определений графов.
+- `/api/v1/runs/` — просмотр запусков; состояние меняется отдельными командами.
+- `/api/v2/runs/execute` — поставить выполнение в очередь.
+- `/api/v2/runs/{run_id}` — получить статус, вход и результат.
+- `/api/v2/runs/{run_id}/events?after=0&limit=100` — получить страницу событий.
+- `/api/v2/runs/{run_id}/resume` — поставить ответ человека в очередь.
 
-# Только быстрые Unit-тесты (без поднятия БД)
-pytest tests/unit/ -v
+Сначала создайте агента и workflow через CRUD API или Django admin. Пример запуска с UUID существующего workflow:
 
-# Только интеграционные тесты (с тестовой БД)
-pytest tests/integration/ -v --reuse-db
+```sh
+curl --fail-with-body http://127.0.0.1:8000/api/v2/runs/execute \
+  -H 'Authorization: Token YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"workflow_id":"WORKFLOW_UUID","input_data":{"prompt":"Кратко изложи текст"}}'
 ```
 
----
+Необязательный заголовок `Idempotency-Key` (1–128 символов) предотвращает повторные команды запуска в своей области действия. Ответ `202 Accepted` подтверждает сохранение команды. Итог исполнения проверяйте отдельно:
 
-## 🐛 Решённые проблемы (Почему это было сложно)
+```sh
+curl --fail-with-body http://127.0.0.1:8000/api/v2/runs/RUN_UUID/events \
+  -H 'Authorization: Token YOUR_TOKEN'
 
-| Проблема | Решение |
-|----------|---------|
-| **Конфликт лейблов (`duplicates: agents`)** | Пакет `django-nova` содержит внутренний модуль с лейблом `agents`. Решено заданием `label = 'domain_agents'` в `src/agents/apps.py`. |
-| **`EnumType.__call__() missing 1 argument`** | Django 5.0 не принимает чистый Python `StrEnum` в параметр `choices`. Решено генерацией списка кортежей: `[(s.value, s.name) for s in AgentStatus]`. |
-| **`cache_ttl` вместо `cache_ttl_seconds`** | В пакете использовался `cache_ttl`, а в коде фреймворка параметр называется `cache_ttl_seconds`. Имена параметров выровнены. |
-| **`AppRegistryNotReady`** | Импорт `NovaModel` внутри `__init__.py` ломал инициализацию Django. Решено переносом импортов строго в `models.py`. |
-| **SQLite `ArrayField` в тестах** | SQLite не поддерживает массивы. Решено переводом поля `tool_ids` на `models.JSONField`, так как Pydantic всё равно гарантирует типизацию. |
-
----
-
-## 🛠 Что делать дальше (Roadmap)
-
-- [ ] **Outbox Pattern** — Заменить `asyncio.create_task()` на запись в таблицу `outbox`. Позволит перезапускать сервер без потери фоновых задач.
-- [ ] **Real LLM Streaming** — Интегрировать `httpx`-стриминг в `LLMService` для вывода токенов в реальном времени.
-- [ ] **Human-in-the-loop** — Реализовать приостановку графа, сохранение контекста в БД и эндпоинт `/resume` для продолжения выполнения.
-- [ ] **Time-Travel UI** — Frontend запрашивает массив `events` из `WorkflowRun` и отрисовывает временную шкалу выполнения графа.
-
----
-
-## 🔄 Схема выполнения
-
-
-
----
-
-## 📡 Примеры API
-
-```bash
-# Запуск выполнения (возвращается мгновенно)
-POST /api/v2/runs/execute
-# → 202 Accepted { "run_id": "uuid", "status": "PENDING" }
-
-# Получение статуса и событий
-GET /api/v2/runs/{run_id}
-# → { "status": "RUNNING", "events": [...] }
+curl --fail-with-body http://127.0.0.1:8000/api/v2/runs/RUN_UUID/resume \
+  -H 'Authorization: Token YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"input":{"approved":true}}'
 ```
 
----
+Если ожидается несколько согласований, передавайте `node_id` рядом с `input` в теле resume. Страница событий содержит `next_after` и `has_more`; максимальный размер страницы — 200.
 
-## 📄 Лицензия
+Точные схемы запросов и ответов доступны в development OpenAPI `/api/v2/docs`. В production документация API отключена.
 
-MIT © [Artem Alimpiev ](https://github.com/Artem7898)
+## Исполнение графов
+
+При проверке определения отклоняются циклы, повторные id и рёбра с неизвестными концами. Узлы выполняются последовательно в порядке зависимостей. Общий потомок запускается один раз после активных предшественников. Согласование человеком сохраняет checkpoint; продолжение проходит через очередь команд.
+
+Условия задаются структурированными значениями, например `{ "path": "decision", "op": "eq", "value": true }`. Python-выражения не исполняются. В workflow можно выбрать `output_node_id` и лимиты `max_steps`, `max_duration_seconds`, `max_tool_calls`, `max_tokens`, `max_output_tokens`, `tool_timeout_seconds`. Точные значения по умолчанию и правила находятся в `src/workflows/schemas.py`. `tool_ids` агента ограничивает допустимые инструменты при вызове.
+
+Запуск хранит снимок определения workflow, поэтому редактирование исходного графа не меняет уже начатый run. События предназначены для просмотра истории. API произвольного rollback и отмены внешних эффектов нет.
+
+## Проверки
+
+Для интеграционной проверки нужна PostgreSQL и роль с правом создания тестовой БД:
+
+```sh
+DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen pytest
+uv run --frozen python manage.py makemigrations --check --dry-run
+uv run --frozen ruff check .
+uv run --frozen pyright
+uv build --wheel
+uv run --frozen python scripts/wheel_smoke.py
+```
+
+Wheel smoke устанавливает зафиксированные runtime-зависимости и wheel в новый временный venv, затем импортирует ASGI из каталога вне checkout. Для него нужен сетевой доступ к пакетам и Git. CI также проверяет миграции и запускает тесты с PostgreSQL 16.
+
+## Production
+
+Для каждого процесса установите `DJANGO_SETTINGS_MODULE=config.settings.prod`. Через менеджер секретов задайте случайный `SECRET_KEY` длиной не менее 50 символов, PostgreSQL `DATABASE_URL`, явный JSON-список `ALLOWED_HOSTS` и реальные ключи LLM. При отсутствии обязательных настроек запуск должен завершаться ошибкой. HTTPS настраивается на reverse proxy; разрешённые frontend origins указываются явно. `TRUST_PROXY_HEADERS=true` допустим только за доверенным proxy, который перезаписывает forwarded-заголовки и закрывает прямой доступ к приложению.
+
+Перед запуском процессов:
+
+```sh
+uv run --frozen python manage.py check --deploy
+uv run --frozen python manage.py migrate --noinput
+uv run --frozen python manage.py collectstatic --noinput
+```
+
+Web `uvicorn config.asgi:application` и worker `python manage.py runworker` должны использовать один release и БД, запускаться под supervision. До реальных нагрузок настройте хранение данных, метрики, оповещения и проверенное восстановление backup. Docker image поддерживает те же команды. Для managed-среды с собственным CA можно передать объединённый trusted bundle через BuildKit secret: `docker build --secret id=proxy_ca,src=/path/to/combined-ca.pem .`; сертификат монтируется только при установке зависимостей.
+
+[Runbook](docs/operations.md) описывает миграции, lease, retry, backup и восстановление. Лицензия репозитория — [MIT](LICENSE), зависимости сохраняют собственные лицензии.
+
+
+Команды используют тот же Token-заголовок. `POST /api/v2/runs/{run_id}/resume` принимает `{"node_id":"approval","input":{"approved":true}}` и ставит продолжение в очередь. При нескольких ожидающих согласованиях укажите узел явно. `POST /api/v2/runs/{run_id}/cancel` запрашивает отмену; выполняющийся инструмент остановится по timeout или на следующей контрольной точке исполнения.
+
+Staff получает агрегаты через `GET /api/v2/operations`: количество запусков и команд по статусам, возраст старейшей pending-команды, просроченные processing leases и сохранённые токены. Endpoint не отдаёт payload и не рассчитывает денежную стоимость. Готовые узлы пока выполняются последовательно в порядке зависимостей.

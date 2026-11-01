@@ -1,22 +1,3 @@
-
-#### 2.3. Структура полной документации (`docs/`)
-
-```text
-docs/
-├── index.md                  # Введение, Quick Start
-├── architecture/
-│   ├── overview.md           # Диаграммы C4, ASGI routing
-│   ├── event_sourcing.md     # Как мы храним состояние WorkflowRun
-│   └── caching_strategy.md   # Django Nova Smart Cache deep-dive
-├── domain_model/
-│   ├── agents_and_tools.md   # Схемы, реестр инструментов
-│   └── workflow_dag.md       # Компиляция DAG, валидация циклов
-├── api_reference/
-│   ├── drf_endpoints.md      # CRUD операции (auto-generated from Nova)
-│   └── fastapi_streaming.md  # SSE endpoints для LLM streaming
-├── observability/
-│   ├── tracing.md            # Как читать трейсы в Tempo
-│   └── logging.md            # Формат JSON логов, grep-паттерны
-└── deployment/
-    ├── zero_downtime.md      # Гайд по миграциям в проде
-    └── asgi_tuning.md        # Настройка Uvicorn + Uvloop
+Documentation lives in docs/index.md and docs/operations.md.
+Local setup and API examples: README.md and README_RU.md.
+mkdocs.yml is provided for optional documentation tooling; MkDocs is not a runtime dependency.

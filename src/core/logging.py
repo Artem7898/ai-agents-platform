@@ -1,6 +1,8 @@
 import logging
+
 import structlog
 from opentelemetry import trace
+
 
 def add_otel_context(logger, method_name, event_dict):
     """Injects OTel trace/span IDs into every log record."""
@@ -11,15 +13,16 @@ def add_otel_context(logger, method_name, event_dict):
         event_dict["span_id"] = format(ctx.span_id, "016x")
     return event_dict
 
+
 structlog.configure(
     processors=[
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.StackInfoRenderer(),
         add_otel_context,
-        structlog.processors.TimeStamper(fmt="iso"), # ISO-8601
+        structlog.processors.TimeStamper(fmt="iso"),  # ISO-8601
         structlog.processors.dict_tracebacks,
-        structlog.processors.JSONRenderer(), # JSON output for Loki/Datadog
+        structlog.processors.JSONRenderer(),  # JSON output for Loki/Datadog
     ],
     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     context_class=dict,

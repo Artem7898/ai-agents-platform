@@ -1,165 +1,128 @@
-# AI Multi-Agent Workflow Platform
+# AI Agents Platform
 
-<p align="center">
-  <img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/django-5.x-green.svg" alt="Django 5.x">
-  <img src="https://img.shields.io/badge/fastapi-latest-teal.svg" alt="FastAPI">
-  <img src="https://img.shields.io/badge/pydantic-v2-e92063.svg" alt="Pydantic v2">
-  <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License: MIT">
-  <img src="https://img.shields.io/badge/tests-pytest-brightgreen.svg" alt="Tests: pytest">
-</p>
+A Django 5.2 LTS backend for persisted AI workflows, with Django REST Framework for CRUD, FastAPI for execution commands, PostgreSQL, and a separate outbox worker. Python 3.12 or newer is required.
 
-<p align="center">
-  <b>Production-ready, async-first, event-driven backend for orchestrating AI agents and LLM workflows.</b>
-</p>
+The project provides a foundation for authenticated workflow execution, graph validation, checkpoints and recovery. External tool effects need their own idempotency guarantees: retrying a message cannot guarantee exactly-once effects in another system. Latency, throughput and availability depend on the deployment and must be measured there.
 
-Built on **Django 5.x** and **django-nova**, ensuring strict typing, zero-downtime deployments, and deep observability.
+[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md)
 
----
+## Local setup
 
-## 🚀 Key Achievements
+Install [uv](https://docs.astral.sh/uv/) and Docker with Compose, then:
 
-| Feature | Description                                                                                                                                                                                          |
-|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Real Django Nova Package** | Uses a custom `django-nova` package from GitHub https://github.com/Artem7898/django-nova (not a PyPI stub). Implements the **Single Source of Truth (SSOT)** pattern via strict Pydantic v2 schemas. |
-| **Strict DDD Architecture** | Domains are separated into `schemas.py` (Pydantic DTOs), `models.py` (ORM State), `services.py` (Business Logic), and `api/` (Controllers). Strict layer isolation.                                  |
-| **Hybrid ASGI Router** | `config/asgi.py` implements routing: **DRF** handles CRUD (`/api/v1/`), **FastAPI** handles Execution/Streaming (`/api/v2/`).                                                                        |
-| **Event Sourcing (Time-Travel)** | `WorkflowRun` stores all steps in a JSONB `events` array. Allows rolling back execution state to any step.                                                                                           |
-| **Async-First Execution** | `WorkflowExecutor` uses `asyncio.TaskGroup` for concurrent execution of independent DAG branches without Celery overhead.                                                                            |
-| **Agent Loop (Tool Calling)** | Infinite loop implemented: LLM requests tool → Registry executes → Result returned to LLM → LLM produces final answer.                                                                               |
-| **Strict Pydantic Validation** | `extra="forbid"` — prevents LLM hallucinations at the ORM level. Invalid JSON never reaches the database.                                                                                            |
-| **Connection Pooling** | Modular singleton `AsyncOpenAI` in `LLMService`, preserving TCP connections (NFR: p95 first-token < 800ms).                                                                                          |
-| **Accepted & Go Pattern** | Execution controller (`POST /api/v2/runs/execute`) returns **202 Accepted** instantly, while execution starts via `asyncio.create_task`.                                                             |
-| **Polling API** | `GET /api/v2/runs/{run_id}` returns status and event history for the UI.                                                                                                                             |
-
----
-
-## 📁 Project Architecture
-
-Strict domain isolation (DDD) and explicit separation of Django (State) and Pydantic (DTO).
-
-```
-ai-agents-platform/
-├── config/              # Django settings (Hybrid ASGI, Uvicorn)
-├── src/                 # Source code (PYTHONPATH)
-│   ├── core/            # Infrastructure: OpenTelemetry, logging
-│   ├── agents/          # Domain: Agents (SSOT: AgentSpec)
-│   ├── workflows/       # Domain: Workflows (SSOT: WorkflowSpec, NodeKind)
-│   ├── runs/            # Domain: Runs (Event Sourcing: WorkflowRunSpec, EventType)
-│   └── api/             # Presentation layer (Controllers)
-│       ├── drf/         # DRF ViewSets (via to_drf_serializer)
-│       └── fastapi/     # FastAPI Routers (Execution, Polling)
-└── tests/               # Tests (pytest + pytest-asyncio + respx)
-    ├── unit/            # Schema tests, tool_registry (no DB)
-    ├── integration/     # Service tests, API tests (with test DB)
-    └── e2e/             # API and LLM integration tests (via mocks)
-```
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone and setup
-
-```bash
-git clone https://github.com/Artem7898/ai-agents-platform
+```sh
+git clone https://github.com/Artem7898/ai-agents-platform.git
 cd ai-agents-platform
+cp .env.example .env
+uv sync --frozen --extra dev
+docker compose up -d postgres
+uv run --frozen python manage.py migrate
+uv run --frozen python manage.py createsuperuser
+uv run --frozen python manage.py drf_create_token YOUR_USERNAME
 ```
 
-### 2. Create environment and install dependencies (via `uv`)
+The checked-in lock file fixes the runtime dependency graph, including the Nova Git revision. Keep real API keys and database credentials outside version control. Add `OPENAI_API_KEY` to your local `.env` only when using a real LLM; tests use mocks.
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
+Start the web process and worker in separate terminals:
+
+```sh
+uv run --frozen uvicorn config.asgi:application --host 127.0.0.1 --port 8000 --reload
 ```
 
-> ⚠️ **Important:** The `django-nova` package is pulled directly from GitHub (the PyPI version is a broken stub).
-> If you are using your own fork of `django-nova`, change the line in `pyproject.toml` to:
-> ```toml
-> "https://github.com/Artem7898/django-nova" 
-> 
-> ```
-
----
-
-## ▶️ How to Run (Development)
-
-For local development, we use **SQLite** (to avoid Docker setup) and **Uvicorn** for hybrid ASGI support.
-
-```bash
-# Apply migrations and start the server
-python manage.py migrate
-uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --reload
+```sh
+uv run --frozen python manage.py runworker
 ```
 
-### 🐳 Alternative: Production (with real database)
+A web process alone accepts commands but does not consume the queue. PostgreSQL is required for the multi-worker locking and recovery guarantees; SQLite is only a lightweight local/test option.
 
-```bash
-DJANGO_SETTINGS_MODULE=config.settings.dev_postgres   uvicorn config.asgi:application --host 0.0.0.0 --port 8000
+Alternatively, run the application and its database in containers:
+
+```sh
+cp .env.example .env
+docker compose up --build -d
+docker compose exec web python manage.py createsuperuser
+docker compose exec web python manage.py drf_create_token YOUR_USERNAME
 ```
 
----
+Compose binds PostgreSQL and HTTP to loopback and uses development-only database credentials. It is a local setup, not a production deployment manifest.
 
-## 🧪 How to Run Tests
+## Authentication and API
 
-The project uses **pytest** with plugins `pytest-asyncio` and `respx`.
+Both API versions require `Authorization: Token <key>`. Django sessions are used for `/admin/`; logging into the admin does not replace the API token. Ordinary users see their owned agents and workflows. Staff can manage shared/legacy records. Treat tokens as passwords and use HTTPS outside localhost.
 
-```bash
-# All tests (Unit + Integration + E2E)
-pytest tests/ -v --cov=src --cov-report=term-missing
+- `/api/v1/agents/`: agent CRUD.
+- `/api/v1/workflows/`: workflow CRUD.
+- `/api/v1/runs/`: run inspection; state changes use explicit commands.
+- `/api/v2/runs/execute`: queue execution.
+- `/api/v2/runs/{run_id}`: inspect status, input and output.
+- `/api/v2/runs/{run_id}/events?after=0&limit=100`: inspect paginated persisted events.
+- `/api/v2/runs/{run_id}/resume`: queue human input for a waiting run.
 
-# Only fast Unit tests (no DB required)
-pytest tests/unit/ -v
+Create an agent and workflow through the CRUD API or Django admin first. Use an actual workflow UUID below:
 
-# Only Integration tests (with test DB)
-pytest tests/integration/ -v --reuse-db
+```sh
+curl --fail-with-body http://127.0.0.1:8000/api/v2/runs/execute \
+  -H 'Authorization: Token YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"workflow_id":"WORKFLOW_UUID","input_data":{"prompt":"Summarize this text"}}'
 ```
 
----
+An optional `Idempotency-Key` header (1–128 characters) prevents duplicate execution commands within its scope. Execution commands return `202 Accepted` with the run identifier. Acknowledgement means the command is persisted; inspect the run to learn whether execution completed:
 
-## 🐛 Solved Problems (Why This Was Hard)
+```sh
+curl --fail-with-body http://127.0.0.1:8000/api/v2/runs/RUN_UUID/events \
+  -H 'Authorization: Token YOUR_TOKEN'
 
-| Problem | Solution |
-|---------|----------|
-| **Label conflict (`duplicates: agents`)** | The `django-nova` package contains an internal module with the `agents` label. Fixed by setting `label = 'domain_agents'` in `src/agents/apps.py`. |
-| **`EnumType.__call__() missing 1 argument`** | Django 5.0 does not accept pure Python `StrEnum` in the `choices` parameter. Fixed by generating a tuple list on the fly: `[(s.value, s.name) for s in AgentStatus]`. |
-| **`cache_ttl` instead of `cache_ttl_seconds`** | The package used `cache_ttl`, but the framework code uses `cache_ttl_seconds`. Parameter names aligned. |
-| **`AppRegistryNotReady`** | Importing `NovaModel` inside `__init__.py` broke Django initialization. Fixed by moving imports strictly to `models.py`. |
-| **SQLite `ArrayField` in tests** | SQLite does not support arrays. Fixed by migrating `tool_ids` to `models.JSONField`, since Pydantic guarantees typing anyway. |
-
----
-
-## 🛠 Roadmap
-
-- [ ] **Outbox Pattern** — Replace `asyncio.create_task()` with writes to an `outbox` table. This allows server restarts without losing background tasks.
-- [ ] **Real LLM Streaming** — Integrate `httpx` streaming into `LLMService` for real-time token output.
-- [ ] **Human-in-the-loop** — Implement graph pause, context persistence in DB, and a `/resume` endpoint to continue execution.
-- [ ] **Time-Travel UI** — Frontend can request the `events` array from `WorkflowRun` and render a timeline of graph execution.
-
----
-
-## 🔄 Execution Flow
-
-
+curl --fail-with-body http://127.0.0.1:8000/api/v2/runs/RUN_UUID/resume \
+  -H 'Authorization: Token YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"input":{"approved":true}}'
 ```
 
----
+For multiple pending approvals, include `node_id` beside `input` in the resume body. Event pages return `next_after` and `has_more`; the maximum page size is 200.
 
-## 📡 API Examples
+Use the generated development OpenAPI documentation at `/api/v2/docs` for exact request/response schemas. Documentation endpoints are disabled in production.
 
-```bash
-# Start execution (returns immediately)
-POST /api/v2/runs/execute
-# → 202 Accepted { "run_id": "uuid", "status": "PENDING" }
+## Workflow behavior
 
-# Poll for status and events
-GET /api/v2/runs/{run_id}
-# → { "status": "RUNNING", "events": [...] }
+Definitions are validated before execution: node identifiers must be unique, edge endpoints must exist, and cycles are rejected. Nodes execute in dependency order; a shared successor executes once after its active predecessors. Node execution is currently sequential. Human approval checkpoints preserve the pending graph state and resume through the same durable command path.
+
+Conditions use structured values such as `{ "path": "decision", "op": "eq", "value": true }` rather than executable Python expressions. A workflow can select `output_node_id` and configure limits including `max_steps`, `max_duration_seconds`, `max_tool_calls`, `max_tokens`, `max_output_tokens` and `tool_timeout_seconds`. See the schemas in `src/workflows/schemas.py` for defaults and validation rules. Agent `tool_ids` are an execution allowlist, not merely suggestions to the model.
+
+Runs preserve a snapshot of the workflow definition so editing a workflow does not change an existing run. Persisted events support inspection; they do not provide an API for undoing an external side effect or arbitrary time-travel rollback.
+
+## Checks
+
+Use a PostgreSQL test database and a role allowed to create the test database:
+
+```sh
+DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen pytest
+uv run --frozen python manage.py makemigrations --check --dry-run
+uv run --frozen ruff check .
+uv run --frozen pyright
+uv build --wheel
+uv run --frozen python scripts/wheel_smoke.py
 ```
 
----
+The wheel smoke check installs locked runtime dependencies and the wheel into a fresh temporary environment, then imports the ASGI application from outside the checkout. It needs package/Git network access. CI also checks migrations and runs the suite against PostgreSQL 16.
 
-## 📄 License
+## Production
 
-MIT © [Artem Alimpiev](https://github.com/Artem7898)
+Use `DJANGO_SETTINGS_MODULE=config.settings.prod` for every process. Supply a generated `SECRET_KEY` of at least 50 characters, a PostgreSQL `DATABASE_URL`, explicit JSON `ALLOWED_HOSTS`, and the real LLM credentials through your secret manager. Production settings fail when required configuration is absent. Configure HTTPS at the reverse proxy and explicitly list allowed frontend origins if needed. Set `TRUST_PROXY_HEADERS=true` only behind a trusted proxy that overwrites forwarding headers and blocks direct client access to the app.
+
+Before starting web and worker processes:
+
+```sh
+uv run --frozen python manage.py check --deploy
+uv run --frozen python manage.py migrate --noinput
+uv run --frozen python manage.py collectstatic --noinput
+```
+
+Start `uvicorn config.asgi:application` and `python manage.py runworker` as separate supervised processes using the same release and database. Configure storage retention, metrics, alerts and tested backup/restore before accepting real workloads. The Docker image supports the same commands. In a managed build environment that needs a custom CA, pass a combined trusted bundle as an optional BuildKit secret: `docker build --secret id=proxy_ca,src=/path/to/combined-ca.pem .`; the certificate is mounted only during dependency installation.
+
+[Operations](docs/operations.md) covers migrations, leases, retries, backup and recovery. The [MIT license](LICENSE) applies to this repository; dependencies retain their own licenses.
+
+
+Execution controls use the same Token header. `POST /api/v2/runs/{run_id}/resume` accepts `{"node_id":"approval","input":{"approved":true}}` and queues durable work; it does not execute the graph in the HTTP request. Select a node explicitly when multiple approvals are waiting. `POST /api/v2/runs/{run_id}/cancel` requests cancellation; a running tool stops at its timeout or the next execution checkpoint.
+
+Staff can inspect aggregate queue/run statistics with `GET /api/v2/operations`: status counts, oldest pending age, expired processing leases and persisted token usage. This endpoint does not expose payloads or calculate monetary charges. Ready nodes currently execute sequentially in dependency order.

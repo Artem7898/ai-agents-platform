@@ -1,305 +1,534 @@
-import copy
+"""Durable, deterministic DAG execution.
+
+The worker owns the run lease. This executor saves progress after every node
+and before tool dispatch, and passes the fencing token to every write. Nodes
+run in topological order; independent branches are currently scheduled
+sequentially. Tool backends must honour the supplied idempotency key for
+side effects that can be redelivered after a process crash.
+"""
+
 import asyncio
+import copy
+import json
+import re
+import time
 import uuid
-from datetime import datetime
-from typing import Any
-from contextlib import contextmanager
+from collections.abc import Awaitable
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any, Protocol
+
 import structlog
+from django.db import DatabaseError
 
 from src.agents.llm_service import LLMService
-from src.agents.models import Agent
-from src.agents.schemas import AgentSpec  # ИСПРАВЛЕНО: Импорт DTO
+from src.agents.schemas import AgentSpec, ChatMessage, MessageRole
 from src.agents.tool_registry import ToolRegistry
-from src.runs.models import WorkflowRun
-from src.runs.schemas import RunStatus, NodeKind, EventType
-
-# Безопасный импорт трассировки
-try:
-    from nova.core.tracing import nova_span as _real_nova_span
-
-    NOVA_TRACING_ENABLED = True
-except ImportError:
-    NOVA_TRACING_ENABLED = False
+from src.runs.exceptions import CancellationRequested, ExecutionLeaseLost
+from src.runs.schemas import EventType, ResumeRequest, RunCheckpoint, RunStatus
+from src.workflows.schemas import (
+    ConditionPredicate,
+    NodeKind,
+    WorkflowEdgeSpec,
+    WorkflowNodeSpec,
+    WorkflowSpec,
+)
 
 log = structlog.get_logger()
+_MISSING = object()
+_TEMPLATE = re.compile(r"\{([\w-]+(?:\.[\w-]+)*)\}")
+_TERMINAL = {RunStatus.COMPLETED.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value}
 
 
-@contextmanager
-def safe_nova_span(name: str, **kwargs):
-    if NOVA_TRACING_ENABLED:
-        with _real_nova_span(name, **kwargs) as span:
-            yield span
-    else:
-        log.debug("tracing_disabled", span=name)
-        yield None
+class RunPersistence(Protocol):
+    def load_run(self, run_id: uuid.UUID) -> Awaitable[Any]: ...
+
+    def append_event(
+        self,
+        run_id: uuid.UUID,
+        event_type: str,
+        payload: dict[str, Any],
+        context_snapshot: dict[str, Any] | None = None,
+        *,
+        execution_token: uuid.UUID | None = None,
+    ) -> Awaitable[Any]: ...
+
+    def save_progress(
+        self,
+        run_id: uuid.UUID,
+        *,
+        status: str,
+        checkpoint: dict[str, Any],
+        output_data: dict[str, Any] | None = None,
+        execution_token: uuid.UUID | None = None,
+    ) -> Awaitable[Any]: ...
 
 
 class WorkflowExecutionError(Exception):
-    pass
+    """A deterministic workflow/configuration/budget error."""
+
+
+class RunCancelled(Exception):
+    """Internal control flow for an explicitly cancelled run."""
+
+
+def lookup_path(context: dict[str, Any], path: str) -> Any:
+    """Traverse dictionaries/lists only; no attribute access or evaluation."""
+    value: Any = context
+    for part in path.split("."):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return _MISSING
+    return value
+
+
+def evaluate_condition(predicate: ConditionPredicate, context: dict[str, Any]) -> bool:
+    actual = lookup_path(context, predicate.path)
+    if predicate.op == "exists":
+        return actual is not _MISSING
+    if actual is _MISSING:
+        return False
+    if predicate.op == "truthy":
+        return bool(actual)
+    if predicate.op == "falsy":
+        return not bool(actual)
+    if predicate.op == "eq":
+        return actual == predicate.value
+    if predicate.op == "ne":
+        return actual != predicate.value
+    if predicate.op == "in":
+        return actual in predicate.value
+    if predicate.op == "not_in":
+        return actual not in predicate.value
+    try:
+        if predicate.op == "gt":
+            return actual > predicate.value
+        if predicate.op == "gte":
+            return actual >= predicate.value
+        if predicate.op == "lt":
+            return actual < predicate.value
+        return actual <= predicate.value
+    except TypeError as error:
+        raise WorkflowExecutionError("Condition compared incompatible value types") from error
 
 
 class WorkflowExecutor:
-    def __init__(self, run_id: uuid.UUID):
+    def __init__(
+        self,
+        run_id: uuid.UUID,
+        *,
+        execution_token: uuid.UUID | None = None,
+        persistence: RunPersistence | None = None,
+        llm_service: LLMService | None = None,
+        tool_registry: Any = ToolRegistry,
+    ):
+        if persistence is None:
+            from src.runs import persistence as persistence_module
+
+            persistence = persistence_module
         self.run_id = run_id
-        self.run: WorkflowRun | None = None
+        self.execution_token = execution_token
+        assert persistence is not None
+        self.persistence: RunPersistence = persistence
+        self.llm_service = llm_service or LLMService()
+        self.registry = tool_registry
+        self.run: Any = None
+        self.workflow: WorkflowSpec | None = None
+        self.checkpoint = RunCheckpoint()
         self.context: dict[str, Any] = {}
         self.log = log.bind(run_id=str(run_id))
-
-        # ЭТАП 3: Флаги для реализации State Persistence (HITL)
-        self._paused = False
-        self._pause_node_id: str | None = None
+        self._timer = time.monotonic()
+        self._elapsed_base = 0.0
 
     async def execute(self) -> None:
-        """Точка входа для стандартного запуска."""
-        self.run = await WorkflowRun.objects.select_related("workflow").aget(id=self.run_id)
-        self.log.info("workflow_execution_started", workflow_id=str(self.run.workflow.id))
-
-        await self._append_event(EventType.STATUS_CHANGED, {"status": RunStatus.RUNNING.value})
-        self.run.status = RunStatus.RUNNING.value
-        await self.run.asave(update_fields=["status"])
-
-        try:
-            async with asyncio.TaskGroup() as tg:
-                start_nodes = self._get_start_nodes()
-                for node in start_nodes:
-                    tg.create_task(self._execute_node(node))
-
-        except* WorkflowExecutionError as eg:
-            self.log.error("workflow_execution_failed", exceptions=[str(e) for e in eg.exceptions])
-            await self._fail_run(str(eg.exceptions[0]))
-            #return  # Прерываем выполнение при ошибке
-
-        except* Exception as eg:
-            self.log.exception("unexpected_error_in_taskgroup")
-            await self._fail_run("Internal system error")
-            #return
-
-        # ==================================================================
-        # ЭТАП 3: ПРОВЕРКА НА ПАУЗУ (Вместо слепого статуса COMPLETED)
-        # ==================================================================
-        if self._paused:
-            self.log.info("workflow_paused_for_hitl", node_id=self._pause_node_id)
-
-            # ТЗ: Сохраняем self.context в поле input_data текущего WorkflowRun
-            # Используем специальный ключ, чтобы не затереть оригинальный input пользователя
-            self.run.input_data["__hitl_state"] = {
-                "resume_node_id": self._pause_node_id,
-                "context": self.context
-            }
-
-            await self._append_event(EventType.STATUS_CHANGED, {"status": RunStatus.WAITING_HUMAN.value})
-            self.run.status = RunStatus.WAITING_HUMAN.value
-            await self.run.asave(update_fields=["status", "input_data"])
+        self.run = await self.persistence.load_run(self.run_id)
+        if self.run.status in _TERMINAL:
             return
-
-        # 4. Успешное завершение (только если не было паузы)
-        await self._append_event(EventType.STATUS_CHANGED, {"status": RunStatus.COMPLETED.value})
-        self.run.status = RunStatus.COMPLETED.value
-        self.run.output_data = self.context.get("final_output")
-        await self.run.asave(update_fields=["status", "output_data"])
-        self.log.info("workflow_execution_completed")
-
-    # ======================================================================
-    # ЭТАП 3: МЕТОД ВОЗОБНОВЛЕНИЯ (Вызывается из нового эндпоинта)
-    # ======================================================================
-    async def resume(self, human_input: dict[str, Any]) -> None:
-        """
-        ТЗ: POST /api/v2/runs/{run_id}/resume
-        Достает контекст из БД и перезапускает граф с нужного места.
-        """
-        self.run = await WorkflowRun.objects.select_related("workflow").aget(id=self.run_id)
-
-        if self.run.status != RunStatus.WAITING_HUMAN.value:
-            raise ValueError(f"Run {self.run_id} is not waiting for human input")
-
-        # 1. Восстанавливаем состояние из "заморозки"
-        hitl_state = self.run.input_data.pop("__hitl_state", None)
-        if not hitl_state:
-            raise ValueError("Corrupted HITL state: cannot find __hitl_state in input_data")
-
-        self._pause_node_id = hitl_state["resume_node_id"]
-        self.context = hitl_state["context"]
-
-        # 2. Инжектим ответ человека в контекст графа
-        self.context[f"hitl_input_{self._pause_node_id}"] = human_input
-
-        # 3. Убираем мусор из input_data и меняем статус
-        await self.run.asave(update_fields=["input_data"])
-        await self._append_event(EventType.STATUS_CHANGED,
-                                 {"status": RunStatus.RUNNING.value, "reason": "Resumed by human"})
-        self.run.status = RunStatus.RUNNING.value
-        await self.run.asave(update_fields=["status"])
-
-        # 4. Находим узел, на котором остановились
-        resume_node = next((n for n in self.run.workflow.nodes if n["id"] == self._pause_node_id), None)
-        if not resume_node:
-            await self._fail_run(f"Resume node {self._pause_node_id} not found in workflow")
-            return
-
-        self._paused = False  # Сбрасываем флаг
-
-        # 5. Запускаем граф именно с этого узла (и его следующих веток)
         try:
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(self._execute_node(resume_node))
-        except* Exception as eg:
-            await self._fail_run(str(eg.exceptions[0]))
-            #return
-
-        if not self._paused:
-            await self._append_event(EventType.STATUS_CHANGED, {"status": RunStatus.COMPLETED.value})
-            self.run.status = RunStatus.COMPLETED.value
-            self.run.output_data = self.context.get("final_output")
-            await self.run.asave(update_fields=["status", "output_data"])
-
-    async def _execute_node(self, node: dict[str, Any]) -> None:
-        """Рекурсивный обход DAG."""
-        node_id = node["id"]
-        node_kind = NodeKind(node["kind"])
-
-        self.log.info("node_started", node_id=node_id, kind=node_kind)
-        await self._append_event(EventType.NODE_ENTER, {"node_id": node_id})
-
-        try:
-            if node_kind == NodeKind.LLM_CALL:
-                await self._handle_llm_call(node)
-            elif node_kind == NodeKind.TOOL_EXEC:
-                await self._handle_tool_exec(node)
-            elif node_kind == NodeKind.HITL_APPROVAL:
-                await self._handle_hitl(node)
-                # ЭТАП 3: Возвращаемся БЕЗ raise. Ветка графа останавливается.
+            self._restore()
+            if self.run.status == RunStatus.WAITING_HUMAN.value:
                 return
+            await self._run_with_deadline()
+        except (RunCancelled, CancellationRequested):
+            await self._finish(RunStatus.CANCELLED)
+        except (WorkflowExecutionError, ValueError, KeyError, TypeError) as error:
+            await self._fail_run(str(error))
 
-            await self._append_event(EventType.NODE_EXIT, {"node_id": node_id})
+    async def resume(self, human_input: dict[str, Any]) -> None:
+        self.run = await self.persistence.load_run(self.run_id)
+        self._restore()
+        if "input" in human_input or "node_id" in human_input:
+            command = ResumeRequest.model_validate(human_input)
+        else:
+            command = ResumeRequest(input=human_input)
+        node_id = command.node_id
+        if node_id is None:
+            if len(self.checkpoint.waiting) == 1:
+                node_id = self.checkpoint.waiting[0]
+            elif not self.checkpoint.waiting and len(self.checkpoint.human_inputs) == 1:
+                # Compatibility for a direct single-approval retry. Durable
+                # commands always freeze their resolved node_id at enqueue.
+                node_id = next(iter(self.checkpoint.human_inputs))
+            else:
+                raise ValueError("node_id is required when several approvals are waiting")
+        already_approved = node_id in self.checkpoint.human_inputs
+        if already_approved:
+            if self.checkpoint.human_inputs[node_id] != command.input:
+                raise ValueError("This approval already has a different recorded decision")
+            if node_id not in self.checkpoint.completed:
+                raise ValueError("Corrupted checkpoint: approval decision is not completed")
+            if self.run.status in _TERMINAL:
+                return
+        elif self.run.status in _TERMINAL:
+            raise ValueError(f"Run {self.run_id} is already terminal")
+        elif node_id not in self.checkpoint.waiting:
+            raise ValueError("The requested node is not waiting for human input")
+        try:
+            await self._check_cancelled()
+            if not already_approved:
+                self.checkpoint.waiting.remove(node_id)
+                self.checkpoint.human_inputs[node_id] = copy.deepcopy(command.input)
+                self.context[f"hitl_input_{node_id}"] = copy.deepcopy(command.input)
+                self._set_result(node_id, command.input)
+                self.checkpoint.completed.append(node_id)
+                await self._persist(RunStatus.RUNNING)
+                await self._event(EventType.HITL_RESUMED, {"node_id": node_id})
+                await self._event(EventType.NODE_EXIT, {"node_id": node_id}, snapshot=True)
+            await self._run_with_deadline()
+        except (RunCancelled, CancellationRequested):
+            await self._finish(RunStatus.CANCELLED)
+        except (WorkflowExecutionError, ValueError, KeyError, TypeError) as error:
+            await self._fail_run(str(error))
 
-            next_nodes = self._get_next_nodes(node_id)
-            if next_nodes:
-                async with asyncio.TaskGroup() as tg:
-                    for next_node in next_nodes:
-                        tg.create_task(self._execute_node(with_context = True))
+    def _restore(self) -> None:
+        snapshot = self.run.workflow_snapshot
+        if not snapshot:
+            raise WorkflowExecutionError("Run has no immutable workflow snapshot")
+        self.workflow = WorkflowSpec.model_validate(snapshot)
+        if self.workflow.id != self.run.workflow_id:
+            raise WorkflowExecutionError("Snapshot does not match the run workflow")
+        if self.run.checkpoint:
+            self.checkpoint = RunCheckpoint.model_validate(self.run.checkpoint)
+        else:
+            inputs = copy.deepcopy(self.run.input_data)
+            self.checkpoint = RunCheckpoint(
+                context={**inputs, "input": inputs, "nodes": {}},
+                started_at=datetime.now(UTC).isoformat(),
+            )
+        known = {node.id for node in self.workflow.nodes}
+        completed = set(self.checkpoint.completed)
+        skipped = set(self.checkpoint.skipped)
+        waiting = set(self.checkpoint.waiting)
+        if not (completed | skipped | waiting) <= known:
+            raise WorkflowExecutionError("Checkpoint references unknown workflow nodes")
+        if completed & skipped or completed & waiting or skipped & waiting:
+            raise WorkflowExecutionError("Checkpoint contains conflicting node states")
+        if self.checkpoint.executed_steps > self.workflow.limits.max_steps:
+            raise WorkflowExecutionError("Run node budget exceeded")
+        if self.checkpoint.tool_calls > self.workflow.limits.max_tool_calls:
+            raise WorkflowExecutionError("Run tool-call budget exceeded")
+        if self.checkpoint.usage.get("total_tokens", 0) > self.workflow.limits.max_tokens:
+            raise WorkflowExecutionError("Run token budget exceeded")
+        self.context = self.checkpoint.context
+        self._elapsed_base = self.checkpoint.elapsed_seconds
+        self._timer = time.monotonic()
 
-        except Exception as e:
-            self.log.error("node_failed", node_id=node_id, error=str(e))
-            await self._append_event(EventType.NODE_EXIT, {"node_id": node_id}, with_context=True)
-            # Рекурсивный обход следующих узлов
-            next_nodes = self._get_next_nodes(node_id)
-            raise WorkflowExecutionError(f"Node {node_id} failed: {e}") from e
+    async def _run_with_deadline(self) -> None:
+        assert self.workflow is not None
+        remaining = self.workflow.limits.max_duration_seconds - self._elapsed_base
+        if remaining <= 0:
+            raise WorkflowExecutionError("Run time budget exceeded")
+        try:
+            async with asyncio.timeout(remaining):
+                await self._persist(RunStatus.RUNNING)
+                await self._drive()
+        except TimeoutError as error:
+            raise WorkflowExecutionError("Run time budget exceeded") from error
 
-    async def _handle_llm_call(self, node: dict[str, Any]) -> None:
-        """ИСПРАВЛЕНО: Используем AgentSpec вместо ORM модели (Этап 1 ТЗ)."""
-        agent_id = node.get("agent_id")
-        agent = await Agent.objects.aget(id=agent_id)
-        agent_spec = agent.to_spec()  # Конвертируем в DTO
+    async def _drive(self) -> None:
+        assert self.workflow is not None
+        incoming: dict[str, list[WorkflowEdgeSpec]] = {node.id: [] for node in self.workflow.nodes}
+        for edge in self.workflow.edges:
+            incoming[edge.target].append(edge)
+        while True:
+            progressed = False
+            terminal = set(self.checkpoint.completed) | set(self.checkpoint.skipped)
+            for node in self.workflow.nodes:
+                if node.id in terminal or node.id in self.checkpoint.waiting:
+                    continue
+                predecessors = incoming[node.id]
+                if any(edge.source not in terminal for edge in predecessors):
+                    continue
+                await self._check_cancelled()
+                if predecessors and not any(self._edge_enabled(edge) for edge in predecessors):
+                    self.checkpoint.skipped.append(node.id)
+                    terminal.add(node.id)
+                    await self._persist(RunStatus.RUNNING)
+                    await self._event(EventType.NODE_SKIPPED, {"node_id": node.id})
+                    progressed = True
+                    continue
+                await self._execute_node(node)
+                terminal = set(self.checkpoint.completed) | set(self.checkpoint.skipped)
+                progressed = True
+            if not progressed:
+                break
+        if self.checkpoint.waiting:
+            await self._finish(RunStatus.WAITING_HUMAN)
+            return
+        unresolved = {node.id for node in self.workflow.nodes} - terminal
+        if unresolved:
+            raise WorkflowExecutionError("Graph cannot progress from its saved checkpoint")
+        await self._finish(RunStatus.COMPLETED, self._output())
 
-        llm_service = LLMService()
-        tools = ToolRegistry.get_openai_tools_schema()
+    def _edge_enabled(self, edge: WorkflowEdgeSpec) -> bool:
+        if edge.source in self.checkpoint.skipped:
+            return False
+        if edge.condition is None:
+            return True
+        if isinstance(edge.condition, bool):
+            return self.context["nodes"][edge.source]["result"] is edge.condition
+        return evaluate_condition(edge.condition, self.context)
 
-        prompt = node.get("config", {}).get("prompt_template", "").format(**self.context)
+    async def _execute_node(self, node: WorkflowNodeSpec) -> None:
+        assert self.workflow is not None
+        state = self.checkpoint.node_states.setdefault(node.id, {})
+        if not state.get("entered"):
+            if self.checkpoint.executed_steps >= self.workflow.limits.max_steps:
+                raise WorkflowExecutionError("Run node budget exceeded")
+            self.checkpoint.executed_steps += 1
+            state["entered"] = True
+            await self._persist(RunStatus.RUNNING)
+            await self._event(EventType.NODE_ENTER, {"node_id": node.id, "kind": node.kind.value})
+        try:
+            if node.kind == NodeKind.HITL_APPROVAL:
+                self.checkpoint.waiting.append(node.id)
+                await self._persist(RunStatus.RUNNING)
+                await self._event(EventType.HITL_WAITING, {"node_id": node.id})
+                return
+            if node.kind == NodeKind.LLM_CALL:
+                result = await self._handle_llm_call(node)
+                self.context[f"llm_output_{node.id}"] = result
+            elif node.kind == NodeKind.TOOL_EXEC:
+                result = await self._handle_tool_exec(node)
+                self.context[f"tool_result_{node.id}"] = result
+            else:
+                predicate = ConditionPredicate.model_validate(node.config["condition"])
+                result = evaluate_condition(predicate, self.context)
+            self._set_result(node.id, result)
+            self.checkpoint.completed.append(node.id)
+            await self._persist(RunStatus.RUNNING)
+            await self._event(EventType.NODE_EXIT, {"node_id": node.id}, snapshot=True)
+        except (
+            asyncio.CancelledError,
+            RunCancelled,
+            CancellationRequested,
+            ExecutionLeaseLost,
+            DatabaseError,
+        ):
+            raise
+        except Exception as error:
+            await self._event(EventType.NODE_FAILED, {"node_id": node.id, "error": str(error)})
+            raise WorkflowExecutionError(f"Node {node.id} failed: {error}") from error
 
-        messages = [
-            {"role": "system", "content": agent_spec.system_prompt},
-            {"role": "user", "content": prompt}
-        ]
-
-        with safe_nova_span("node.llm_agent_loop", node_id=node["id"]):
-            while True:
-                # ИСПРАВЛЕНО: Передаем agent_spec
-                response = await llm_service.generate_with_tools(
-                    agent_spec=agent_spec,
-                    prompt="",
-                    tools=tools if tools else None,
-                    context_history=messages
+    async def _handle_llm_call(self, node: WorkflowNodeSpec) -> str:
+        assert self.workflow is not None
+        agent = await self._load_agent(node.agent_id)
+        agent_spec = agent.to_spec()
+        if str(agent.owner_id) != str(self.run.workflow.owner_id):
+            raise WorkflowExecutionError("Agent does not belong to the workflow owner")
+        if agent.status != "active":
+            raise WorkflowExecutionError("LLM nodes require an active agent")
+        allowed_ids = agent_spec.tool_ids
+        tools = self.registry.get_specs(allowed_tool_ids=allowed_ids)
+        state = self.checkpoint.node_states.setdefault(node.id, {})
+        if state.get("done"):
+            return str(state["result"])
+        if "history" not in state:
+            prompt = self._resolve_context_vars(
+                node.config.get("prompt_template", "{input.prompt}")
+            )
+            state.update(
+                history=[
+                    ChatMessage(role=MessageRole.USER, content=str(prompt)).model_dump(mode="json")
+                ],
+                pending_calls=[],
+                next_call=0,
+            )
+        while True:
+            await self._check_cancelled()
+            for index in range(state["next_call"], len(state["pending_calls"])):
+                call = state["pending_calls"][index]
+                await self._reserve_tool_call(f"{node.id}:{call['id']}")
+                result = await self.registry.execute(
+                    call["name"],
+                    call["arguments"],
+                    allowed_tool_ids=allowed_ids,
+                    timeout=self.workflow.limits.tool_timeout_seconds,
+                    idempotency_key=f"{self.run_id}:{node.id}:{call['id']}",
                 )
+                state["history"].append(
+                    ChatMessage(
+                        role=MessageRole.TOOL, content=json.dumps(result), tool_call_id=call["id"]
+                    ).model_dump(mode="json")
+                )
+                state["next_call"] = index + 1
+                await self._persist(RunStatus.RUNNING)
+                await self._event(
+                    EventType.TOOL_CALL,
+                    {"node_id": node.id, "tool": call["name"], "tool_call_id": call["id"]},
+                )
+            remaining_tokens = self.workflow.limits.max_tokens - self.checkpoint.usage.get(
+                "total_tokens", 0
+            )
+            if remaining_tokens <= 0:
+                raise WorkflowExecutionError("Run token budget exceeded")
+            if state.get("rounds", 0) >= self.workflow.limits.max_tool_calls + 1:
+                raise WorkflowExecutionError("Run LLM-round budget exceeded")
+            response = await self.llm_service.generate_with_tools(
+                agent_spec=agent_spec,
+                prompt="",
+                tools=tools or None,
+                context_history=[
+                    ChatMessage.model_validate(message) for message in state["history"]
+                ],
+                max_output_tokens=min(self.workflow.limits.max_output_tokens, remaining_tokens),
+            )
+            self.checkpoint.usage["total_tokens"] = (
+                self.checkpoint.usage.get("total_tokens", 0) + response.usage.total_tokens
+            )
+            state["rounds"] = state.get("rounds", 0) + 1
+            state["history"].append(response.as_message().model_dump(mode="json"))
+            state["pending_calls"] = [call.model_dump(mode="json") for call in response.tool_calls]
+            state["next_call"] = 0
+            if not response.tool_calls:
+                state.update(done=True, result=response.content or "")
+            await self._persist(RunStatus.RUNNING)
+            if self.checkpoint.usage["total_tokens"] > self.workflow.limits.max_tokens:
+                raise WorkflowExecutionError("Run token budget exceeded")
+            if state.get("done"):
+                return str(state["result"])
 
-                messages.append(response.model_dump())
+    async def _load_agent(self, agent_id: uuid.UUID | None) -> Any:
+        snapshot = self.run.agent_snapshots.get(str(agent_id))
+        if not snapshot:
+            raise WorkflowExecutionError("Run has no immutable snapshot for its agent")
+        spec = AgentSpec.model_validate(snapshot["spec"])
+        return SimpleNamespace(
+            owner_id=snapshot["owner_id"], status=snapshot["status"], to_spec=lambda: spec
+        )
 
-                if not response.tool_calls:
-                    self.context[f"llm_output_{node['id']}"] = response.content or ""
-                    break
+    async def _reserve_tool_call(self, call_key: str) -> None:
+        assert self.workflow is not None
+        if call_key in self.checkpoint.reserved_tool_calls:
+            return
+        if self.checkpoint.tool_calls >= self.workflow.limits.max_tool_calls:
+            raise WorkflowExecutionError("Run tool-call budget exceeded")
+        self.checkpoint.tool_calls += 1
+        self.checkpoint.reserved_tool_calls.append(call_key)
+        await self._persist(RunStatus.RUNNING)
 
-                for tool_call in response.tool_calls:
-                    tool_name = tool_call["name"]
-                    tool_args = tool_call["arguments"]
-
-                    self.log.info("tool_call_dispatched", tool=tool_name, node_id=node["id"])
-
-                    with safe_nova_span("tool.execution", tool=tool_name):
-                        result = await ToolRegistry.execute(tool_name, tool_args)
-
-                    self.context[f"tool_result_{tool_call['id']}"] = result
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.get("id"),
-                        "content": str(result)
-                    })
-
-    async def _handle_tool_exec(self, node: dict[str, Any]) -> None:
-        tool_name = node["config"]["tool_name"]
-        arguments = node["config"].get("arguments", {})
-        resolved_args = self._resolve_context_vars(arguments)
-
-        with safe_nova_span("node.tool_exec", tool=tool_name):
-            result = await ToolRegistry.execute(tool_name, resolved_args)
-            self.context[f"tool_result_{node['id']}"] = result
-
-    # ======================================================================
-    # ЭТАП 3: ПРАВИЛЬНАЯ РЕАЛИЗАЦИЯ HITL (State Persistence)
-    # ======================================================================
-    async def _handle_hitl(self, node: dict[str, Any]) -> None:
-        """
-        ТЗ: Вместо raise мы прерываем текущую ветку графа,
-        но другие параллельные ветки продолжат работать.
-        """
-        self.log.info("waiting_for_human_approval", node_id=node["id"])
-        await self._append_event(EventType.HITL_WAITING, {"node_id": node["id"]})
-
-        # Устанавливаем флаги для главного цикла execute()
-        self._paused = True
-        self._pause_node_id = node["id"]
-
-        # return произойдет автоматически, мягко завершая эту задачу в TaskGroup
-
-    async def _append_event(self, event_type: EventType, payload: dict[str, Any], with_context: bool = False) -> None:
-        """
-        Event Sourcing: атомарное добавление события в JSONB массив.
-        with_context: Если True, делает снимок памяти графа (для Time-Travel UI).
-        """
-        event = {
-            "id": str(uuid.uuid4()),
-            "type": event_type.value,
-            "payload": payload,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-        # ЭТАП 4: Сохраняем снимок памяти для отладки (Time-Travel)
-        if with_context:
-            # Делаем глубокую копию, чтобы события не ссылались на один объект в памяти
-            event["context_snapshot"] = copy.deepcopy(self.context)
-
-        self.run.events.append(event)
-        await self.run.asave(update_fields=["events"])
-
-    async def _fail_run(self, error_msg: str) -> None:
-        await self._append_event(EventType.STATUS_CHANGED, {"status": RunStatus.FAILED.value, "error": error_msg})
-        self.run.status = RunStatus.FAILED.value
-        await self.run.asave(update_fields=["status"])
-
-    def _get_start_nodes(self) -> list[dict]:
-        edges = self.run.workflow.edges
-        target_ids = {e["target"] for e in edges}
-        return [n for n in self.run.workflow.nodes if n["id"] not in target_ids]
-
-    def _get_next_nodes(self, node_id: str) -> list[dict]:
-        next_ids = {e["target"] for e in self.run.workflow.edges if e["source"] == node_id}
-        return [n for n in self.run.workflow.nodes if n["id"] in next_ids]
+    async def _handle_tool_exec(self, node: WorkflowNodeSpec) -> Any:
+        assert self.workflow is not None
+        state = self.checkpoint.node_states.setdefault(node.id, {})
+        if state.get("done"):
+            return state["result"]
+        spec = self.registry.get_spec_by_id(node.tool_id)
+        arguments = self._resolve_context_vars(node.config.get("arguments", {}))
+        if not isinstance(arguments, dict):
+            raise WorkflowExecutionError("Tool arguments must resolve to an object")
+        await self._reserve_tool_call(f"{node.id}:tool")
+        result = await self.registry.execute(
+            spec.name,
+            arguments,
+            allowed_tool_ids=[node.tool_id],
+            timeout=self.workflow.limits.tool_timeout_seconds,
+            idempotency_key=f"{self.run_id}:{node.id}:tool",
+        )
+        state.update(done=True, result=result)
+        await self._persist(RunStatus.RUNNING)
+        return result
 
     def _resolve_context_vars(self, data: Any) -> Any:
         if isinstance(data, str):
-            try:
-                return data.format(**self.context)
-            except KeyError:
-                return data
-        elif isinstance(data, dict):
-            return {k: self._resolve_context_vars(v) for k, v in data.items()}
+            whole = _TEMPLATE.fullmatch(data)
+            if whole:
+                value = lookup_path(self.context, whole.group(1))
+                if value is _MISSING:
+                    raise WorkflowExecutionError(f"Missing template input: {whole.group(1)}")
+                return copy.deepcopy(value)
+
+            def replace(match: re.Match[str]) -> str:
+                value = lookup_path(self.context, match.group(1))
+                if value is _MISSING:
+                    raise WorkflowExecutionError(f"Missing template input: {match.group(1)}")
+                return str(value)
+
+            return _TEMPLATE.sub(replace, data)
+        if isinstance(data, dict):
+            return {key: self._resolve_context_vars(value) for key, value in data.items()}
+        if isinstance(data, list):
+            return [self._resolve_context_vars(value) for value in data]
         return data
+
+    def _set_result(self, node_id: str, result: Any) -> None:
+        json.dumps(result)  # Reject a non-serializable tool result before checkpointing.
+        self.context.setdefault("nodes", {})[node_id] = {"result": copy.deepcopy(result)}
+
+    def _output(self) -> dict[str, Any]:
+        assert self.workflow is not None
+        if self.workflow.output_node_id:
+            result = (
+                self.context.get("nodes", {}).get(self.workflow.output_node_id, {}).get("result")
+            )
+            return {"result": copy.deepcopy(result)}
+        sources = {edge.source for edge in self.workflow.edges}
+        results = {
+            node.id: copy.deepcopy(self.context["nodes"][node.id]["result"])
+            for node in self.workflow.nodes
+            if node.id not in sources and node.id in self.checkpoint.completed
+        }
+        return {"result": next(reversed(results.values())) if results else None, "results": results}
+
+    async def _check_cancelled(self) -> None:
+        current = await self.persistence.load_run(self.run_id)
+        if current.cancel_requested or current.status == RunStatus.CANCELLED.value:
+            raise RunCancelled()
+
+    def _checkpoint_data(self) -> dict[str, Any]:
+        self.checkpoint.elapsed_seconds = self._elapsed_base + time.monotonic() - self._timer
+        return self.checkpoint.model_dump(mode="json")
+
+    async def _persist(self, status: RunStatus, output: dict[str, Any] | None = None) -> None:
+        await self.persistence.save_progress(
+            self.run_id,
+            status=status.value,
+            checkpoint=self._checkpoint_data(),
+            output_data=output,
+            execution_token=self.execution_token,
+        )
+        self.run.status = status.value
+
+    async def _event(
+        self, event_type: EventType, payload: dict[str, Any], *, snapshot: bool = False
+    ) -> None:
+        await self.persistence.append_event(
+            self.run_id,
+            event_type.value,
+            payload,
+            context_snapshot=copy.deepcopy(self.context) if snapshot else None,
+            execution_token=self.execution_token,
+        )
+
+    async def _finish(self, status: RunStatus, output: dict[str, Any] | None = None) -> None:
+        await self._persist(status, output)
+
+    async def _fail_run(self, error_msg: str) -> None:
+        self.log.error("workflow_execution_failed", error=error_msg)
+        self.checkpoint.error = error_msg
+        try:
+            await self._persist(RunStatus.FAILED)
+        except CancellationRequested:
+            await self._finish(RunStatus.CANCELLED)
