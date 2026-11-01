@@ -1,9 +1,13 @@
 """
 Infrastructure Layer: Django ORM модели для домена Agents.
 """
+
 import uuid
+
+from django.conf import settings
 from django.db import models
-from nova import NovaModel, NovaConfig  # Вернули импорт твоего фреймворка
+from nova import NovaConfig, NovaModel  # Вернули импорт твоего фреймворка
+
 from .schemas import AgentSpec, AgentStatus
 
 
@@ -11,14 +15,19 @@ class Agent(NovaModel):  # Вернули NovaModel
     """
     ORM модель агента. Строго маппится на AgentSpec из schemas.py
     """
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="agents",
+    )
     name = models.CharField(max_length=128, db_index=True)
 
     # Новые поля из актуальной схемы
-    model_name = models.CharField(
-        max_length=128,
-        help_text="Например, gpt-4o, qwen-max"
-    )
+    model_name = models.CharField(max_length=128, help_text="Например, gpt-4o, qwen-max")
     system_prompt = models.TextField()
     tool_ids = models.JSONField(default=list, blank=True, db_index=True)
     temperature = models.FloatField(default=0.7, help_text="Температура LLM (0.0 - 2.0)")
@@ -29,7 +38,7 @@ class Agent(NovaModel):  # Вернули NovaModel
         # Генерируем список кортежей [(value, label), ...] для Django
         choices=[(status.value, status.name) for status in AgentStatus],
         default=AgentStatus.DRAFT.value,  # В default лучше передавать строку .value
-        db_index=True
+        db_index=True,
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -49,7 +58,7 @@ class Agent(NovaModel):  # Вернули NovaModel
         cache_enabled=True,
         cache_ttl_seconds=300,
         strict_validation=True,
-        exclude_from_pydantic=("status", "created_at", "updated_at")
+        exclude_from_pydantic=("status", "created_at", "updated_at", "owner"),
     )
 
     def to_spec(self) -> AgentSpec:
@@ -71,7 +80,7 @@ class Agent(NovaModel):  # Вернули NovaModel
             name=spec.name,
             model_name=spec.model_name,
             system_prompt=spec.system_prompt,
-            tool_ids=spec.tool_ids,
+            tool_ids=[str(tool_id) for tool_id in spec.tool_ids],
             temperature=spec.temperature,
         )
 

@@ -1,20 +1,15 @@
+"""Domain contracts shared by the engine, tools and provider adapters."""
+
 import uuid
-from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Any
-from pydantic import BaseModel, ConfigDict, Field, UUID4
+from typing import Annotated, Any, Literal
 
-# PEP 695 Type Aliases
+from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
+
 type AgentID = UUID4
-type ToolID = UUID4
-type WorkflowID = UUID4
-type RunID = UUID4
+# Tool identities are stable UUID5 values derived from their registered name.
+type ToolID = uuid.UUID
 
-class NodeKind(StrEnum):
-    LLM_CALL = "llm_call"
-    TOOL_EXEC = "tool_exec"
-    CONDITION = "condition"
-    HITL_APPROVAL = "hitl_approval"
 
 class MessageRole(StrEnum):
     SYSTEM = "system"
@@ -22,87 +17,85 @@ class MessageRole(StrEnum):
     ASSISTANT = "assistant"
     TOOL = "tool"
 
+
 class AgentStatus(StrEnum):
     DRAFT = "draft"
     ACTIVE = "active"
     ARCHIVED = "archived"
 
-# --- Content Blocks (Discriminated Union) ---
+
+class ToolCall(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    id: str = Field(min_length=1)
+    name: str = Field(pattern=r"^[a-z0-9_]+$", min_length=1)
+    arguments: dict[str, Any]
+
+
+class ChatMessage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    role: MessageRole
+    content: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    tool_call_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_role_fields(self) -> "ChatMessage":
+        if self.tool_calls and self.role != MessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can request tools")
+        if self.role == MessageRole.TOOL:
+            if not self.tool_call_id or self.content is None:
+                raise ValueError("Tool messages require tool_call_id and content")
+        elif self.tool_call_id is not None:
+            raise ValueError("Only tool messages can contain tool_call_id")
+        if self.content is None and not self.tool_calls:
+            raise ValueError("A message needs content or tool calls")
+        return self
+
+
 class TextBlock(BaseModel):
+    """Compatibility input; new integrations should use ChatMessage."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["text"] = "text"
-    text: str = Field(..., description="Текстовое содержимое")
+    text: str
+    role: MessageRole = MessageRole.ASSISTANT
+
 
 class ToolUseBlock(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["tool_use"] = "tool_use"
-    tool_id: ToolID
+    tool_id: ToolID | None = None
+    tool_use_id: str = Field(min_length=1)
     name: str
-    arguments: dict[str, Any] = Field(..., description="Аргументы вызова инструмента")
+    arguments: dict[str, Any]
+
 
 class ToolResultBlock(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["tool_result"] = "tool_result"
-    tool_use_id: str
+    tool_use_id: str = Field(min_length=1)
     content: str
     is_error: bool = False
 
+
 type ContentBlock = Annotated[
-    TextBlock | ToolUseBlock | ToolResultBlock,
-    Field(discriminator="type")
+    TextBlock | ToolUseBlock | ToolResultBlock, Field(discriminator="type")
 ]
 
-# --- Core Specs ---
+
 class ToolSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     id: ToolID = Field(default_factory=uuid.uuid4)
-    name: str = Field(..., pattern=r"^[a-z0-9_]+$", description="Имя функции для LLM")
+    name: str = Field(pattern=r"^[a-z0-9_]+$", min_length=1)
     description: str
-    parameters_schema: dict[str, Any] = Field(..., description="JSON Schema аргументов")
+    parameters_schema: dict[str, Any]
+
 
 class AgentSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     id: AgentID = Field(default_factory=uuid.uuid4)
-    name: str
-    model_name: str = Field(..., description="Например, gpt-4o, qwen-max")
+    name: str = Field(min_length=1, max_length=128)
+    model_name: str = Field(min_length=1, max_length=128)
     system_prompt: str
     tool_ids: list[ToolID] = Field(default_factory=list)
-    temperature: float = Field(0.7, ge=0.0, le=2.0)
-
-class WorkflowNodeSpec(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    id: str = Field(..., description="Внутренний ID узла в DAG")
-    kind: NodeKind
-    agent_id: AgentID | None = None
-    tool_id: ToolID | None = None
-    config: dict[str, Any] = Field(default_factory=dict)
-
-class WorkflowEdgeSpec(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    source: str
-    target: str
-    condition: str | None = Field(None, description="Python-выражение или JSONPath для ветвления")
-
-class WorkflowSpec(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    id: WorkflowID = Field(default_factory=uuid.uuid4)
-    name: str
-    version: int = 1
-    nodes: list[WorkflowNodeSpec]
-    edges: list[WorkflowEdgeSpec]
-
-class RunStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    WAITING_HUMAN = "waiting_human"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-class WorkflowRunSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid") # Mutable state
-    id: RunID = Field(default_factory=uuid.uuid4)
-    workflow_id: WorkflowID
-    status: RunStatus = RunStatus.PENDING
-    input_data: dict[str, Any] = Field(default_factory=dict)
-    output_data: dict[str, Any] | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    temperature: float = Field(0.7, ge=0.0, le=2.0, allow_inf_nan=False)

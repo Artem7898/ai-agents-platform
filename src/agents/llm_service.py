@@ -1,277 +1,336 @@
-"""
-LLM Integration Service (Infrastructure Layer).
+"""Provider transport, typed message mapping and bounded completion handling."""
 
-Архитектурные решения:
-1. Сервис полностью изолирован от Django ORM. Принимает AgentSpec (Pydantic DTO),
-   что позволяет тестировать его в unit-тестах без БД.
-2. Реализован паттерн "Strict Structured Outputs" через JSON Schema от OpenAI.
-   Это исключает ситуацию "сломанный JSON от LLM ломает базу данных" на уровне API-контракта.
-3. История сообщений (context_history) передается исключительно как in-memory список
-   на время одного LLM-цикла, соблюдая требования Event Sourcing (Этап 1).
-"""
+import copy
 import json
-from typing import AsyncIterator, Type, TypeVar, Any
+from collections.abc import AsyncIterator, Sequence
 from contextlib import contextmanager
+from typing import Any, TypeVar, cast
 
-from pydantic import BaseModel, ValidationError
-from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
-import structlog
+import httpx
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolUnionParam
+from openai.types.chat.completion_create_params import CompletionCreateParamsNonStreaming
+from opentelemetry import trace
+from pydantic import BaseModel, ConfigDict, Field
 
-from src.agents.schemas import AgentSpec, ToolSpec, ContentBlock
+from .schemas import (
+    AgentSpec,
+    ChatMessage,
+    ContentBlock,
+    MessageRole,
+    TextBlock,
+    ToolCall,
+    ToolResultBlock,
+    ToolSpec,
+    ToolUseBlock,
+)
 
-# Безопасный импорт трассировки django-nova (Infrastructure boundary)
-try:
-    from nova.core.tracing import nova_span as _real_nova_span
-    NOVA_TRACING_READY = True
-except ImportError:
-    NOVA_TRACING_READY = False
-
-log = structlog.get_logger()
 T = TypeVar("T", bound=BaseModel)
-
-
-# ============================================================================
-# 1. CONNECTION POOLING & RESILIENCE (Singleton)
-# ============================================================================
-# Архитектурное решение: Клиент создается один раз на жизненный цикл Uvicorn воркера.
-# Мы явно задаем лимиты httpx, чтобы при скачках нагрузки (spike) мы не исчерпали
-# файловые дескрипторы (file descriptors) на сервере (NFR: Resilience & Scaling).
 _llm_client: AsyncOpenAI | None = None
+
+
+class LLMResponseError(ValueError):
+    """The provider refused, truncated or returned an invalid completion."""
+
+
+class TokenUsage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+
+
+class LLMResponse(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    content: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+
+    def as_message(self) -> ChatMessage:
+        return ChatMessage(
+            role=MessageRole.ASSISTANT,
+            content=self.content,
+            tool_calls=self.tool_calls,
+        )
+
 
 def get_llm_client() -> AsyncOpenAI:
     global _llm_client
     if _llm_client is None:
+        from django.conf import settings
+
+        api_key = getattr(settings, "OPENAI_API_KEY", None) if settings.configured else None
+        base_url = getattr(settings, "OPENAI_BASE_URL", None) if settings.configured else None
         _llm_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
             timeout=60.0,
             max_retries=2,
-            # Явно ограничиваем пул соединений для защиты от exhaustion
-            http_client=None # В будущем тут можно подставить кастомный httpx.AsyncClient с лимитами
+            http_client=httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+                timeout=60.0,
+            ),
         )
     return _llm_client
 
+
+async def close_llm_client() -> None:
+    """Called by ASGI lifespan and worker shutdown on their owning event loop."""
+    global _llm_client
+    if _llm_client is not None:
+        client, _llm_client = _llm_client, None
+        await client.close()
+
+
 @contextmanager
-def safe_nova_span(name: str, **kwargs):
-    if NOVA_TRACING_READY:
-        with _real_nova_span(name, **kwargs) as span:
-            yield span
-    else:
-        yield None
+def safe_nova_span(name: str, **attributes: str | int | float | bool):
+    """Use inside the awaited operation, never as a sync coroutine decorator."""
+    with trace.get_tracer(__name__).start_as_current_span(name) as span:
+        for key, value in attributes.items():
+            span.set_attribute(key, value)
+        yield span
 
 
-# ============================================================================
-# 2. MAPPERS (ORM/DTO -> OpenAI API Format)
-# ============================================================================
-# Архитектурное решение: Мы не заставляем бизнес-логику или executor формировать
-# сырые словари для OpenAI. Инкапсулируем специфику стороннего API внутри сервиса.
-def _map_tools_to_openai_spec(tools: list[ToolSpec]) -> list[dict[str, Any]]:
-    """Преобразует доменные ToolSpec в формат OpenAI Function Calling."""
+def _strict_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Pydantic's object schemas to the provider's strict subset.
+
+    Open-ended mappings cannot be represented in that subset and fail before a
+    provider request. Defaults stay in the domain model, not the wire schema.
+    """
+    result = copy.deepcopy(schema)
+
+    def visit(value: dict[str, Any]) -> None:
+        # Schema containers such as `properties` are maps of user-chosen names;
+        # process their values rather than treating the container as a schema.
+        value.pop("default", None)
+        if value.get("type") == "object" or "properties" in value:
+            extra = value.get("additionalProperties", False)
+            if extra is not False:
+                raise ValueError("Strict output schemas cannot contain open-ended mappings")
+            properties = value.setdefault("properties", {})
+            value["required"] = list(properties)
+            value["additionalProperties"] = False
+        for key in ("properties", "$defs", "definitions"):
+            for child in value.get(key, {}).values():
+                if isinstance(child, dict):
+                    visit(child)
+        for key in ("items", "not", "contains"):
+            child = value.get(key)
+            if isinstance(child, dict):
+                visit(child)
+        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            for child in value.get(key, []):
+                if isinstance(child, dict):
+                    visit(child)
+
+    visit(result)
+    return result
+
+
+def _map_tools_to_openai_spec(tools: Sequence[ToolSpec]) -> list[ChatCompletionToolUnionParam]:
     return [
         {
             "type": "function",
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters_schema,
-                # В OpenAI strict mode обязательно strict: true
-                "strict": True
-            }
+                "parameters": _strict_json_schema(tool.parameters_schema),
+                "strict": True,
+            },
         }
         for tool in tools
     ]
 
-def _map_history_to_openai_messages(history: list[ContentBlock]) -> list[dict[str, Any]]:
-    """
-    Преобразует доменные ContentBlock (Discriminated Union) в формат сообщений OpenAI.
-    Это гарантирует, что история никогда не будет иметь неверный формат.
-    """
-    messages = []
+
+def _map_history_to_openai_messages(
+    history: Sequence[ChatMessage | ContentBlock],
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
     for block in history:
-        match block.type:
-            case "text":
-                # Для простоты текст пушится как assistant/user в зависимости от контекста вызова
-                messages.append({"role": "assistant", "content": block.text})
-            case "tool_use":
-                # OpenAI требует специфичный формат для tool_calls внутри истории
-                messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": block.tool_use_id,
-                        "type": "function",
-                        "function": {
-                            "name": block.name,
-                            "arguments": json.dumps(block.arguments)
-                        }
-                    }]
-                })
-            case "tool_result":
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": block.tool_use_id,
-                    "content": block.content
-                })
+        if isinstance(block, ChatMessage):
+            message = block
+        elif isinstance(block, TextBlock):
+            message = ChatMessage(role=block.role, content=block.text)
+        elif isinstance(block, ToolUseBlock):
+            message = ChatMessage(
+                role=MessageRole.ASSISTANT,
+                tool_calls=[
+                    ToolCall(id=block.tool_use_id, name=block.name, arguments=block.arguments)
+                ],
+            )
+        elif isinstance(block, ToolResultBlock):
+            message = ChatMessage(
+                role=MessageRole.TOOL,
+                tool_call_id=block.tool_use_id,
+                content=block.content,
+            )
+        else:
+            raise TypeError("History entries must be ChatMessage or typed content blocks")
+        mapped: dict[str, Any] = {"role": message.role.value, "content": message.content}
+        if message.tool_calls:
+            mapped["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, allow_nan=False),
+                    },
+                }
+                for call in message.tool_calls
+            ]
+        if message.tool_call_id is not None:
+            mapped["tool_call_id"] = message.tool_call_id
+        messages.append(mapped)
     return messages
 
 
-# ============================================================================
-# 3. STRICT DATA TRANSFER OBJECTS
-# ============================================================================
-class LLMResponse(BaseModel):
-    """Строго типизированный ответ от LLM (без сырых dict)."""
-    content: str | None
-    tool_calls: list[dict[str, Any]] = []
+def _build_messages(
+    agent_spec: AgentSpec,
+    prompt: str,
+    history: Sequence[ChatMessage | ContentBlock] | None,
+) -> list[dict[str, Any]]:
+    if history is not None and len(history) > 200:
+        raise ValueError("Conversation exceeds 200 messages")
+    mapped = _map_history_to_openai_messages(history or [])
+    if mapped and mapped[0]["role"] == "system":
+        if mapped[0]["content"] != agent_spec.system_prompt:
+            raise ValueError("History cannot override the agent system prompt")
+        mapped = mapped[1:]
+    if any(message["role"] == "system" for message in mapped):
+        raise ValueError("System messages are only allowed at the start")
+    messages = [{"role": "system", "content": agent_spec.system_prompt}, *mapped]
+    if prompt or not mapped:
+        messages.append({"role": "user", "content": prompt})
+    if len(json.dumps(messages, ensure_ascii=False).encode()) > 1_000_000:
+        raise ValueError("Conversation exceeds the request size limit")
+    return messages
 
 
-# ============================================================================
-# 4. CORE SERVICE (Pure Infrastructure)
-# ============================================================================
+def _check_output_limit(max_output_tokens: int) -> None:
+    if type(max_output_tokens) is not int or not 1 <= max_output_tokens <= 32_768:
+        raise ValueError("max_output_tokens must be between 1 and 32768")
+
+
+def _completion_message(response: Any) -> Any:
+    if not response.choices:
+        raise LLMResponseError("Provider returned no completion choices")
+    choice = response.choices[0]
+    if choice.finish_reason not in ("stop", "tool_calls"):
+        raise LLMResponseError(f"Completion did not finish: {choice.finish_reason}")
+    message = choice.message
+    if getattr(message, "refusal", None):
+        raise LLMResponseError("Provider refused the request")
+    return message
+
+
+def _usage(response: Any) -> TokenUsage:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return TokenUsage()
+    return TokenUsage(
+        prompt_tokens=usage.prompt_tokens,
+        completion_tokens=usage.completion_tokens,
+        total_tokens=usage.total_tokens,
+    )
+
+
 class LLMService:
-    """
-    Сервис интеграции с LLM.
-    Содержит ТОЛЬКО логику транспорта (отправка/получение) и маппинга.
-    Не содержит бизнес-логики оркестрации (это делает WorkflowExecutor).
-    """
-
-    @safe_nova_span("llm.generate_with_tools")
     async def generate_with_tools(
-            self,
-            agent_spec: AgentSpec,  # ИЗМЕНЕНО: Принимаем DTO, а не ORM
-            prompt: str,
-            tools: list[ToolSpec] | None = None,
-            context_history: list[ContentBlock] | None = None
+        self,
+        agent_spec: AgentSpec,
+        prompt: str = "",
+        tools: list[ToolSpec] | None = None,
+        context_history: list[ChatMessage | ContentBlock] | None = None,
+        *,
+        max_output_tokens: int = 1024,
     ) -> LLMResponse:
-        """
-        Вызов LLM с поддержкой Function Calling.
-        Используется для узлов DAG, где нужен финальный ответ или решение о вызове инструмента.
-        """
-        client = get_llm_client()
+        _check_output_limit(max_output_tokens)
+        messages = _build_messages(agent_spec, prompt, context_history)
+        parameters: CompletionCreateParamsNonStreaming = {
+            "model": agent_spec.model_name,
+            "messages": cast(list[ChatCompletionMessageParam], messages),
+            "temperature": agent_spec.temperature,
+            "max_completion_tokens": max_output_tokens,
+        }
+        if tools:
+            parameters["tools"] = _map_tools_to_openai_spec(tools)
+        with safe_nova_span("llm.generate_with_tools", model=agent_spec.model_name):
+            response = await get_llm_client().chat.completions.create(**parameters)
+            message = _completion_message(response)
+            calls = []
+            for call in message.tool_calls or []:
+                try:
+                    arguments = json.loads(call.function.arguments)
+                    # JSON's wire format cannot carry NaN or infinite numbers.
+                    json.dumps(arguments, allow_nan=False)
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                    raise LLMResponseError("Provider returned invalid tool arguments") from exc
+                if not isinstance(arguments, dict):
+                    raise LLMResponseError("Tool arguments must be a JSON object")
+                calls.append(ToolCall(id=call.id, name=call.function.name, arguments=arguments))
+            if message.content is None and not calls:
+                raise LLMResponseError("Provider returned an empty completion")
+            return LLMResponse(content=message.content, tool_calls=calls, usage=_usage(response))
 
-        # 1. Формируем контракт сообщений
-        messages = [{"role": "system", "content": agent_spec.system_prompt}]
-
-        if context_history:
-            messages.extend(_map_history_to_openai_messages(context_history))
-
-        messages.append({"role": "user", "content": prompt})
-
-        # 2. Вызов API
-        try:
-            response = await client.chat.completions.create(
-                model=agent_spec.model_name,
-                messages=messages,
-                tools=_map_tools_to_openai_spec(tools) if tools else None,
-                temperature=agent_spec.temperature,
-            )
-        except (APITimeoutError, RateLimitError, APIError) as e:
-            # Логируем через structlog (в проде улетит в Loki/ELK)
-            log.error("llm_api_error", model=agent_spec.model_name, error_type=type(e).__name__)
-            # Пробрасываем как есть. Executor должен перехватить и изменить статус Run на FAILED
-            raise
-
-        # 3. Парсинг ответа
-        choice = response.choices[0]
-        tool_calls = []
-
-        if choice.message.tool_calls:
-            tool_calls = [
-                {
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "arguments": json.loads(tc.function.arguments) # OpenAI возвращает строку
-                }
-                for tc in choice.message.tool_calls
-            ]
-
-        return LLMResponse(
-            content=choice.message.content,
-            tool_calls=tool_calls
-        )
-
-    @safe_nova_span("llm.generate_structured")
     async def generate_structured(
-            self,
-            agent_spec: AgentSpec,
-            prompt: str,
-            target_schema: Type[T],
-            context_history: list[ContentBlock] | None = None
+        self,
+        agent_spec: AgentSpec,
+        prompt: str,
+        target_schema: type[T],
+        context_history: list[ChatMessage | ContentBlock] | None = None,
+        *,
+        max_output_tokens: int = 1024,
     ) -> T:
-        """
-        РЕАЛИЗАЦИЯ ЭТАПА 1 ТЗ: Strict Structured Outputs.
-
-        Заставляет LLM вернуть ответ, который на 100% соответствует Pydantic-схеме.
-        Использует нативную фичу OpenAI Response Format (JSON Schema).
-        Если LLM не может сгенерировать валидный JSON, OpenAI вернет ошибку на уровне API,
-        и мы никогда не получим невалидные данные в нашу бизнес-логику.
-        """
-        client = get_llm_client()
-
-        # Pydantic v2 умеет отдавать JSON Schema, который понимает OpenAI
-        json_schema = target_schema.model_json_schema()
-
-        messages = [{"role": "system", "content": agent_spec.system_prompt}]
-        if context_history:
-            messages.extend(_map_history_to_openai_messages(context_history))
-        messages.append({"role": "user", "content": prompt})
-
-        try:
-            response = await client.chat.completions.create(
+        _check_output_limit(max_output_tokens)
+        messages = _build_messages(agent_spec, prompt, context_history)
+        schema = _strict_json_schema(target_schema.model_json_schema())
+        with safe_nova_span("llm.generate_structured", model=agent_spec.model_name):
+            response = await get_llm_client().chat.completions.create(
                 model=agent_spec.model_name,
-                messages=messages,
+                messages=cast(list[ChatCompletionMessageParam], messages),
                 temperature=agent_spec.temperature,
+                max_completion_tokens=max_output_tokens,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
                         "name": target_schema.__name__,
-                        "strict": True, # Гарантия отсутствия лишних ключей (extra="forbid" в Pydantic)
-                        "schema": json_schema
-                    }
-                }
+                        "strict": True,
+                        "schema": schema,
+                    },
+                },
             )
-        except (APITimeoutError, RateLimitError, APIError) as e:
-            log.error("llm_structured_error", model=agent_spec.model_name, error=str(e))
-            raise
+            content = _completion_message(response).content
+            if content is None:
+                raise LLMResponseError("Provider returned no structured content")
+            return target_schema.model_validate_json(content, strict=True)
 
-        raw_content = response.choices[0].message.content
-
-        # Валидация через Pydantic (формальность при strict=True, но нужна для типизации)
-        return target_schema.model_validate_json(raw_content)
-
-    @safe_nova_span("llm.stream_raw")
     async def stream_raw(
-            self,
-            agent_spec: AgentSpec,
-            prompt: str,
-            context_history: list[ContentBlock] | None = None
+        self,
+        agent_spec: AgentSpec,
+        prompt: str,
+        context_history: list[ChatMessage | ContentBlock] | None = None,
+        *,
+        max_output_tokens: int = 1024,
     ) -> AsyncIterator[str]:
-        """
-        Чистый стриминг сырых токенов.
-        Не делает валидацию (это задача вызывающего кода, если нужно).
-        Служит только для транспорта данных в FastAPI SSE Endpoint.
-        """
-        client = get_llm_client()
-
-        messages = [{"role": "system", "content": agent_spec.system_prompt}]
-        if context_history:
-            messages.extend(_map_history_to_openai_messages(context_history))
-        messages.append({"role": "user", "content": prompt})
-
-        try:
-            stream = await client.chat.completions.create(
+        _check_output_limit(max_output_tokens)
+        messages = _build_messages(agent_spec, prompt, context_history)
+        with safe_nova_span("llm.stream_raw", model=agent_spec.model_name):
+            stream = await get_llm_client().chat.completions.create(
                 model=agent_spec.model_name,
-                messages=messages,
+                messages=cast(list[ChatCompletionMessageParam], messages),
                 stream=True,
                 temperature=agent_spec.temperature,
+                max_completion_tokens=max_output_tokens,
             )
-
-            async for chunk in stream:
-                if not chunk.choices or not chunk.choices[0].delta.content:
-                    continue
-                # Yieldим только сырой текст. Без всяких [ERROR] строк!
-                yield chunk.choices[0].delta.content
-
-        except APIError as e:
-            # В стриме мы НЕ пишем ошибки в текстовый поток.
-            # Мы пробрасываем исключение. FastAPI роутер перехватит его
-            # и отправит клиенту корректный SSE event типа "error".
-            log.error("llm_stream_error", error=str(e))
-            raise
+            try:
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    if choice.finish_reason in ("length", "content_filter"):
+                        raise LLMResponseError(f"Stream did not finish: {choice.finish_reason}")
+                    if choice.delta.content:
+                        yield choice.delta.content
+            finally:
+                await stream.close()

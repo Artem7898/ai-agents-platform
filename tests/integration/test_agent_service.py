@@ -1,58 +1,37 @@
-import pytest
-import pytest_asyncio
 import uuid
 
-from src.agents.services import AgentService
+import pytest
+
+from src.agents.models import Agent
 from src.agents.schemas import AgentStatus
+from src.agents.services import AgentService
+from src.agents.tool_registry import ToolRegistry
+
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
-@pytest.mark.asyncio
-@pytest.mark.django_db(transaction=True)
-async def test_activate_agent_success(agent_factory):
-    """Use-case: успешная активация агента, у которого ЕСТЬ валидные инструменты."""
-    # Arrange: Создаем агента С инструментами (передаем валидные JSON строки, а не UUID объекты)
-    real_tool_uuid = uuid.uuid4()
-    agent = await agent_factory(
-        status=AgentStatus.DRAFT,
-        system_prompt="Valid prompt",
-        tool_ids=[str(real_tool_uuid)],  # <--- ИСПРАВЛЕНО: Строки корректно сохраняются в JSONField
-    )
-    service = AgentService()
-
-    # Act
-    activated_spec = await service.activate_agent(agent.id)
-
-    # Assert: Убрали проверку activated_spec.status, так как AgentSpec не содержит статус
-    # Вместо этого проверяем, что to_spec() отработал и вернул правильные данные конфигурации
-    assert activated_spec.id == agent.id
-    assert activated_spec.system_prompt == "Valid prompt"
-
-    # Проверяем, что изменения сохранились в БД (ЭТОГО ДОСТАТОЧНО ДЛЯ ПРОВЕРКИ СТАТУСА)
-    from src.agents.models import Agent
-    updated_agent = await Agent.objects.aget(id=agent.id)
-    assert updated_agent.status == AgentStatus.ACTIVE.value
+async def test_activate_agent_with_registered_tools(agent_factory):
+    tool = ToolRegistry.get_specs()[0]
+    agent = await agent_factory(status=AgentStatus.DRAFT, tool_ids=[str(tool.id)])
+    spec = await AgentService().activate_agent(agent.id)
+    assert spec.tool_ids == [tool.id]
+    assert (await Agent.objects.aget(pk=agent.pk)).status == "active"
 
 
-@pytest.mark.asyncio
-@pytest.mark.django_db(transaction=True)
 async def test_activate_agent_not_found():
-    """Use-case: активация несуществующего агента."""
-    service = AgentService()
-    fake_id = uuid.uuid4()
-
-    with pytest.raises(ValueError, match=f"Agent {fake_id} not found"):
-        await service.activate_agent(fake_id)
+    agent_id = uuid.uuid4()
+    with pytest.raises(ValueError, match=f"Agent {agent_id} not found"):
+        await AgentService().activate_agent(agent_id)
 
 
-@pytest.mark.asyncio
-@pytest.mark.django_db(transaction=True)
-async def test_activate_agent_without_tools_fails(agent_factory):
-    """Use-case: нельзя активировать агента без инструментов."""
-    agent = await agent_factory(
-        system_prompt="Valid prompt",
-        tool_ids=[],  # Пустой список - валидный JSON, тест "без инструментов" работает корректно
-    )
-    service = AgentService()
+async def test_llm_only_agent_can_be_activated(agent_factory):
+    agent = await agent_factory(status=AgentStatus.DRAFT, tool_ids=[])
+    await AgentService().activate_agent(agent.id)
+    assert (await Agent.objects.aget(pk=agent.pk)).status == "active"
 
-    with pytest.raises(ValueError, match="must have at least one tool"):
-        await service.activate_agent(agent.id)
+
+async def test_unregistered_tool_is_rejected_before_activation(agent_factory):
+    agent = await agent_factory(status=AgentStatus.DRAFT, tool_ids=[str(uuid.uuid4())])
+    with pytest.raises(ValueError):
+        await AgentService().activate_agent(agent.id)
+    assert (await Agent.objects.aget(pk=agent.pk)).status == "draft"

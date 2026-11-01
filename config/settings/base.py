@@ -1,68 +1,53 @@
-"""
-Base Django settings for AI Agents Platform.
-Designed for Django 5.x + Django Nova + Async-First architecture.
-"""
-import logging
-import os
-import sys
+"""Shared settings. Production requirements are validated in prod.py."""
+
 from pathlib import Path
 from typing import Any
 
 import dj_database_url
 import structlog
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from structlog.types import EventDict
 
-# ==============================================================================
-# 1. PATHS & ENVIRONMENT
-# ==============================================================================
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
-# Environment Variables Management (Pydantic-powered)
 class EnvSettings(BaseSettings):
-    """
-    Strict typing for environment variables.
-    Reads from .env file or OS environment.
-    """
-    model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(BASE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,
+        extra="ignore",
+    )
 
-    # Core
-    DEBUG: bool = False
-    SECRET_KEY: str = "django-insecure-change-me-in-prod-via-env"
-    ALLOWED_HOSTS: list[str] = ["*"]  # Restrict in prod.py
-    ENVIRONMENT: str = "development"
-
-    # Database
-    DATABASE_URL: str = "postgres://postgres:postgres@localhost:5432/ai_agents"
-
-    # Redis / Cache
-    REDIS_URL: str = "redis://localhost:6379/0"
-
-    # Observability
-    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"
+    SECRET_KEY: str = "django-insecure-local-development-only"
+    DATABASE_URL: str = f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
+    ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
+    CORS_ALLOWED_ORIGINS: list[str] = []
+    CSRF_TRUSTED_ORIGINS: list[str] = []
+    REDIS_URL: str = ""
     LOG_LEVEL: str = "INFO"
-
-    # Nova Specific
-    NOVA_CACHE_TTL: int = 300
-    NOVA_TRACING_ENABLED: bool = True
+    NOVA_TRACING_ENABLED: bool = False
+    SECURE_SSL_REDIRECT: bool = True
+    SECURE_HSTS_SECONDS: int = 3600
+    TRUST_PROXY_HEADERS: bool = False
+    KNOWLEDGE_BASE_SEARCH_URL: str = ""
+    OPENAI_API_KEY: SecretStr | None = None
+    OPENAI_BASE_URL: str | None = None
+    OUTBOX_LEASE_SECONDS: float = Field(default=600, ge=3, le=86400)
+    OUTBOX_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=100)
 
 
 env = EnvSettings()
-
-# ==============================================================================
-# 2. CORE DJANGO SETTINGS
-# ==============================================================================
-
 SECRET_KEY = env.SECRET_KEY
-DEBUG = env.DEBUG
+KNOWLEDGE_BASE_SEARCH_URL = env.KNOWLEDGE_BASE_SEARCH_URL
+OPENAI_API_KEY = env.OPENAI_API_KEY.get_secret_value() if env.OPENAI_API_KEY else None
+OPENAI_BASE_URL = env.OPENAI_BASE_URL
+OUTBOX_LEASE_SECONDS = env.OUTBOX_LEASE_SECONDS
+OUTBOX_MAX_ATTEMPTS = env.OUTBOX_MAX_ATTEMPTS
+DEBUG = False
 ALLOWED_HOSTS = env.ALLOWED_HOSTS
-
-# Application definition
-# Order matters: Nova apps should be loaded to patch/instrument correctly.
 INSTALLED_APPS = [
-    # Django Core
     "unfold",
     "django.contrib.admin",
     "django.contrib.auth",
@@ -70,25 +55,17 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django.contrib.postgres",  # Required for JSONB/ArrayField
-
-    # Third Party
+    "django.contrib.postgres",
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
-
-    # Django Nova Ecosystem (Must be before domain apps to register hooks)
-     "nova",
-
-    # Domain Apps (DDD Structure)
+    "nova",
     "src.core",
     "src.agents",
     "src.workflows",
     "src.runs",
-
 ]
-
 MIDDLEWARE = [
-    # Security & Session
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -98,18 +75,10 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-
-    # Observability (OpenTelemetry)
-    # Injects trace_id/span_id into contextvars for structlog
-    #"nova.tracing.middleware.OTelMiddleware",
 ]
-
-# ASGI Application
-# Points to our Hybrid Router (Django + FastAPI) defined in config/asgi.py
 ASGI_APPLICATION = "config.asgi.application"
-
+WSGI_APPLICATION = "config.wsgi.application"
 ROOT_URLCONF = "config.urls"
-
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -121,120 +90,54 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-            ],
+            ]
         },
-    },
-]
-
-WSGI_APPLICATION = "config.wsgi.application"  # Fallback, though we use ASGI
-
-# ==============================================================================
-# 3. DATABASE & CACHING (Async-Optimized)
-# ==============================================================================
-
-# PostgreSQL 15+ with psycopg3 (Async support)
-DATABASES = {
-    "default": dj_database_url.parse(
-        env.DATABASE_URL,
-        conn_max_age=600,  # Persistent connections для async ORM
-        conn_health_checks=True,
-    )
-}
-
-# Убедимся, что ENGINE точно указан (защита от пустых URL)
-if not DATABASES["default"].get("ENGINE"):
-    DATABASES["default"]["ENGINE"] = "django.db.backends.postgresql"
-
-# Default primary key field type
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-# Cache Configuration (Required for Django Nova Smart Cache)
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": env.REDIS_URL,
-        "OPTIONS": {
-            "parser_class": "redis.connection.PythonParser",
-            "pool_class": "redis.BlockingConnectionPool",
-        },
-        # Nova uses this TTL if not specified in @nova_model
-        "TIMEOUT": env.NOVA_CACHE_TTL,
     }
+]
+# Persistent Django connections should be disabled in ASGI mode. The database
+# or an external pooler provides connection pooling when required.
+DATABASES = {
+    "default": dj_database_url.parse(env.DATABASE_URL, conn_max_age=0, conn_health_checks=True)
 }
-
-# ==============================================================================
-# 4. DJANGO NOVA CONFIGURATION
-# ==============================================================================
-
-# This dictionary drives the behavior of the Django Nova framework.
-NOVA_SETTINGS = {
-    # Validation
-    "PYDANTIC_STRICT_MODE": True,  # Forbid extra fields in specs
-    "STRICT_TYPES": True,  # Enforce type matching in ORM mapping
-
-    # Caching
-    "CACHE_ENABLED": True,
-    "CACHE_BACKEND": "default",  # Use CACHES['default']
-    "DEFAULT_CACHE_TTL": env.NOVA_CACHE_TTL,
-    "INVALIDATION_STRATEGY": "signal",  # Auto-invalidate on post_save/delete
-
-    # Tracing & Observability
-    "TRACING_ENABLED": env.NOVA_TRACING_ENABLED,
-    "TRACING_SAMPLE_RATE": 1.0,  # 100% sampling in dev, lower in prod
-    "INCLUDE_SQL_QUERIES": True,  # Trace ORM calls
-
-    # API Generation
-    "AUTO_SCHEMA_GENERATION": True,  # Generate OpenAPI from Pydantic
-}
-
-# ==============================================================================
-# 5. DJANGO REST FRAMEWORK (DRF)
-# ==============================================================================
-
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+if env.REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": env.REDIS_URL,
+            "TIMEOUT": 300,
+        }
+    }
+NOVA_CACHE_BACKEND = "memory"
+NOVA_TRACING_ENABLED = env.NOVA_TRACING_ENABLED
+NOVA_SETTINGS = {"TRACING_ENABLED": NOVA_TRACING_ENABLED}
 REST_FRAMEWORK = {
-    # Use Django Nova's auto-serializer logic where possible
-    "DEFAULT_RENDERER_CLASSES": [
-        "rest_framework.renderers.JSONRenderer",
-    ],
-    "DEFAULT_PARSER_CLASSES": [
-        "rest_framework.parsers.JSONParser",
-    ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",
-        # Add Token/JWT auth here for API
+        "rest_framework.authentication.TokenAuthentication",
     ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 50,
-    # Async support for views
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle"
+        "rest_framework.throttling.UserRateThrottle",
     ],
+    "DEFAULT_THROTTLE_RATES": {"anon": "30/minute", "user": "300/minute"},
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
 }
 
 
-# ==============================================================================
-# 6. LOGGING (Structlog + OpenTelemetry)
-# ==============================================================================
+def add_otel_context(_logger: Any, _method: str, event_dict: EventDict) -> EventDict:
+    from opentelemetry import trace
 
-# We completely replace Django's default logging with structlog for JSON output.
-# This ensures every log line has trace_id/span_id if available.
-
-def add_otel_context(logger: Any, method_name: str, event_dict: dict) -> dict:
-    """Injects OpenTelemetry context into every log record."""
-    try:
-        from opentelemetry import trace
-        span = trace.get_current_span()
-        if span.is_recording():
-            ctx = span.get_span_context()
-            event_dict["trace_id"] = format(ctx.trace_id, "032x")
-            event_dict["span_id"] = format(ctx.span_id, "016x")
-    except ImportError:
-        pass
+    span = trace.get_current_span()
+    if span.is_recording():
+        context = span.get_span_context()
+        event_dict["trace_id"] = format(context.trace_id, "032x")
+        event_dict["span_id"] = format(context.span_id, "016x")
     return event_dict
 
 
@@ -242,77 +145,38 @@ structlog.configure(
     processors=[
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
-        structlog.processors.StackInfoRenderer(),
-        structlog.dev.set_exc_info,
-        add_otel_context,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()  # Production-ready JSON logs
+        add_otel_context,
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer(),
     ],
-    # ИСПРАВЛЕНО: используем logging.INFO вместо structlog.INFO
-    wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, env.LOG_LEVEL.upper(), logging.INFO)),
-    context_class=dict,
     logger_factory=structlog.PrintLoggerFactory(),
-    cache_logger_on_first_use=False,
+    cache_logger_on_first_use=True,
 )
-
-# Redirect standard library logging to structlog
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": env.LOG_LEVEL,
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["console"],
-            "level": "WARNING",  # Reduce Django noise
-            "propagate": False,
-        },
-        "django.db.backends": {
-            "handlers": ["console"],
-            "level": "ERROR",  # Only log DB errors
-            "propagate": False,
-        },
-    },
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": env.LOG_LEVEL},
 }
-
-# ==============================================================================
-# 7. INTERNATIONALIZATION & STATIC FILES
-# ==============================================================================
-
-LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
-USE_I18N = True
-USE_TZ = True
-
-STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
-
-MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
-
-# ==============================================================================
-# 8. SECURITY & CORS
-# ==============================================================================
-
-# Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
-
-# CORS (Cross-Origin Resource Sharing)
-# Configure strictly in prod.py
-CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Frontend dev server
-    "http://127.0.0.1:3000",
-]
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+USE_I18N = True
+USE_TZ = True
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOW_CREDENTIALS = False
+CORS_ALLOWED_ORIGINS = env.CORS_ALLOWED_ORIGINS
+CSRF_TRUSTED_ORIGINS = env.CSRF_TRUSTED_ORIGINS
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+X_FRAME_OPTIONS = "DENY"

@@ -1,0 +1,8 @@
+site_name: AI Agents Platform
+site_url: https://github.com/Artem7898/ai-agents-platform
+repo_url: https://github.com/Artem7898/ai-agents-platform
+theme:
+  name: material
+nav:
+  - Overview: index.md
+  - Operations: operations.md

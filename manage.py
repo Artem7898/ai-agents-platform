@@ -9,6 +9,7 @@ WHY THIS FILE IS MODIFIED:
 2. Explicit default settings: Points to `config.settings.dev` for local dev.
 3. Strict typing: Uses PEP 484 type hints for the main function.
 """
+
 import os
 import sys
 from pathlib import Path

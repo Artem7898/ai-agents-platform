@@ -1,32 +1,34 @@
+from uuid import NAMESPACE_URL, uuid5
+
 import pytest
-import uuid
 from pydantic import ValidationError
-from src.agents.schemas import AgentSpec
 
-class TestAgentSpec:
-    def test_valid_agent_creation(self, agent_spec: AgentSpec):
-        """Проверяем, что валидная спека создается без ошибок."""
-        assert agent_spec.name == "Test Agent"
-        assert agent_spec.model_name == "gpt-4o"
-        assert isinstance(agent_spec.tool_ids, list)
+from src.agents.schemas import AgentSpec, ChatMessage, MessageRole, ToolCall
 
-    def test_invalid_temperature_raises(self):
-        """NFR: temperature должна быть в пределах [0.0, 2.0]."""
-        with pytest.raises(ValidationError):
-            AgentSpec(
-                name="Bad Agent",
-                model_name="gpt-4o",
-                system_prompt="test",
-                temperature=5.0 # Выходит за границы
-            )
 
-    def test_extra_fields_forbidden(self):
-        """Строгая валидация: лишние поля запрещены."""
-        with pytest.raises(ValidationError) as exc_info:
-            AgentSpec(
-                name="Bad Agent",
-                model_name="gpt-4o",
-                system_prompt="test",
-                unexpected_field="hack" # Запрещено схемой!
-            )
-        assert "extra_forbidden" in str(exc_info.value)
+def test_agent_accepts_stable_registry_tool_ids():
+    tool_id = uuid5(NAMESPACE_URL, "platform/tool/example")
+    agent = AgentSpec(
+        name="Test Agent",
+        model_name="gpt-4o",
+        system_prompt="Test",
+        tool_ids=[str(tool_id)],
+    )
+    assert agent.tool_ids == [tool_id]
+
+
+def test_invalid_temperature_is_rejected():
+    with pytest.raises(ValidationError):
+        AgentSpec(name="Bad", model_name="gpt-4o", system_prompt="Test", temperature=5.0)
+
+
+def test_extra_agent_fields_are_forbidden():
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        AgentSpec(name="Bad", model_name="gpt-4o", system_prompt="Test", unexpected_field="hack")
+
+
+def test_tool_call_id_is_preserved_in_typed_history():
+    call = ToolCall(id="call_provider_123", name="search", arguments={"query": "test"})
+    assistant = ChatMessage(role=MessageRole.ASSISTANT, tool_calls=[call])
+    result = ChatMessage(role=MessageRole.TOOL, content="Found", tool_call_id=call.id)
+    assert assistant.tool_calls[0].id == result.tool_call_id

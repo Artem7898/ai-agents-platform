@@ -1,0 +1,42 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_DB: agents_test
+          POSTGRES_USER: agents
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agents -d agents_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.test
+      DATABASE_URL: postgresql://agents:ci-only@127.0.0.1:5432/agents_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.23"
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --extra dev --python 3.12
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen pyright
+      - run: uv run --frozen python manage.py check
+      - run: uv run --frozen python manage.py makemigrations --check --dry-run
+      - run: uv run --frozen pytest
+      - run: uv build --wheel
+      - run: uv run --frozen python scripts/wheel_smoke.py
