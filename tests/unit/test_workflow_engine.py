@@ -77,6 +77,12 @@ class Tools:
     def get_specs(self, allowed_tool_ids: list[uuid.UUID]) -> list[Any]:
         return [] if TOOL_ID not in allowed_tool_ids else [self.get_spec_by_id(TOOL_ID)]
 
+    def validate_calls(self, calls, *, allowed_tool_ids):
+        for call in calls:
+            assert call.name == "echo"
+            if TOOL_ID not in allowed_tool_ids:
+                raise PermissionError("Tool is not allowed")
+
     async def execute(self, name: str, arguments: dict[str, Any], **kwargs: Any) -> Any:
         assert name == "echo"
         assert TOOL_ID in kwargs["allowed_tool_ids"]

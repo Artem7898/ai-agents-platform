@@ -21,9 +21,10 @@ from typing import Any, Protocol
 import structlog
 from django.db import DatabaseError
 
-from src.agents.llm_service import LLMService
-from src.agents.schemas import AgentSpec, ChatMessage, MessageRole
-from src.agents.tool_registry import ToolRegistry
+from src.agents.llm_service import LLMService, ToolResponseValidationError
+from src.agents.schemas import AgentSpec, ChatMessage, MessageRole, ToolCall
+from src.agents.tool_context import ToolExecutionContext
+from src.agents.tool_registry import ToolArgumentsValidationError, ToolRegistry
 from src.runs.exceptions import CancellationRequested, ExecutionLeaseLost
 from src.runs.schemas import EventType, ResumeRequest, RunCheckpoint, RunStatus
 from src.workflows.schemas import (
@@ -208,6 +209,10 @@ class WorkflowExecutor:
         snapshot = self.run.workflow_snapshot
         if not snapshot:
             raise WorkflowExecutionError("Run has no immutable workflow snapshot")
+        # Existing runs retain their frozen fail-fast behavior; only newly
+        # created snapshots opt into the new repair default.
+        snapshot = copy.deepcopy(snapshot)
+        snapshot.setdefault("limits", {}).setdefault("max_tool_repairs", 0)
         self.workflow = WorkflowSpec.model_validate(snapshot)
         if self.workflow.id != self.run.workflow_id:
             raise WorkflowExecutionError("Snapshot does not match the run workflow")
@@ -373,6 +378,30 @@ class WorkflowExecutor:
             )
         while True:
             await self._check_cancelled()
+            if state["next_call"] < len(state["pending_calls"]):
+                pending = [ToolCall.model_validate(call) for call in state["pending_calls"]]
+                try:
+                    self.registry.validate_calls(pending, allowed_tool_ids=allowed_ids)
+                except ToolArgumentsValidationError as error:
+                    if state["next_call"] or any(
+                        f"{node.id}:{call.id}" in self.checkpoint.reserved_tool_calls
+                        for call in pending
+                    ):
+                        raise WorkflowExecutionError(
+                            "A partially executed tool batch no longer passes validation"
+                        ) from None
+                    # A restored batch has its assistant message persisted, but
+                    # no tool has run. Remove it before asking for a correction.
+                    last = state["history"][-1] if state["history"] else {}
+                    if (
+                        last.get("role") != "assistant"
+                        or last.get("tool_calls") != state["pending_calls"]
+                    ):
+                        raise WorkflowExecutionError("Saved tool batch has inconsistent history")
+                    state["history"].pop()
+                    await self._repair_tool_response(node, state, error.feedback, error.issues)
+                    continue
+                self._preflight_tool_budget(node, pending)
             for index in range(state["next_call"], len(state["pending_calls"])):
                 call = state["pending_calls"][index]
                 await self._reserve_tool_call(f"{node.id}:{call['id']}")
@@ -382,6 +411,7 @@ class WorkflowExecutor:
                     allowed_tool_ids=allowed_ids,
                     timeout=self.workflow.limits.tool_timeout_seconds,
                     idempotency_key=f"{self.run_id}:{node.id}:{call['id']}",
+                    execution_context=self._tool_context(node.id, call["id"]),
                 )
                 state["history"].append(
                     ChatMessage(
@@ -400,7 +430,10 @@ class WorkflowExecutor:
             )
             if remaining_tokens <= 0:
                 raise WorkflowExecutionError("Run token budget exceeded")
-            if state.get("rounds", 0) >= self.workflow.limits.max_tool_calls + 1:
+            if (
+                state.get("rounds", 0)
+                >= self.workflow.limits.max_tool_calls + self.workflow.limits.max_tool_repairs + 1
+            ):
                 raise WorkflowExecutionError("Run LLM-round budget exceeded")
             runtime_kwargs: dict[str, Any] = {}
             if self._metered:
@@ -416,38 +449,40 @@ class WorkflowExecutor:
                 from src.runtimes.access import get_run_runtime
 
                 runtime_kwargs["runtime"] = await get_run_runtime(self.run, agent_spec)
-            response = await self.llm_service.generate_with_tools(
-                agent_spec=agent_spec,
-                prompt="",
-                tools=tools or None,
-                context_history=[
-                    ChatMessage.model_validate(message) for message in state["history"]
-                ],
-                max_output_tokens=min(self.workflow.limits.max_output_tokens, remaining_tokens),
-                **runtime_kwargs,
-            )
-            if not self._metered:
-                reported_tokens = response.usage.total_tokens
-                accounted_tokens = response.accounted_tokens
-                if accounted_tokens is None:
-                    # Injected services can omit accounting metadata; absent
-                    # usage still consumes the remaining local test budget.
-                    accounted_tokens = (
-                        reported_tokens if reported_tokens is not None else remaining_tokens
-                    )
-                budget_before = self.checkpoint.usage.get(
-                    "budget_tokens", self.checkpoint.usage.get("total_tokens", 0)
+            try:
+                response = await self.llm_service.generate_with_tools(
+                    agent_spec=agent_spec,
+                    prompt="",
+                    tools=tools,
+                    context_history=[
+                        ChatMessage.model_validate(message) for message in state["history"]
+                    ],
+                    max_output_tokens=min(self.workflow.limits.max_output_tokens, remaining_tokens),
+                    **runtime_kwargs,
                 )
-                self.checkpoint.usage["budget_tokens"] = budget_before + accounted_tokens
-                self.checkpoint.usage["total_tokens"] = self.checkpoint.usage.get(
-                    "total_tokens", 0
-                ) + (reported_tokens or 0)
-                self.checkpoint.usage["unknown_calls"] = (
-                    self.checkpoint.usage.get("unknown_calls", 0)
-                    + response.unknown_calls
-                    + int(reported_tokens is None and response.accounted_tokens is None)
+            except ToolResponseValidationError as error:
+                self._account_response(error, remaining_tokens)
+                state["rounds"] = state.get("rounds", 0) + 1
+                await self._repair_tool_response(
+                    node,
+                    state,
+                    "Return tool arguments as a JSON object matching the provided schema.",
+                    ({"code": error.code, "path": ["arguments"]},),
                 )
+                continue
+            self._account_response(response, remaining_tokens)
             state["rounds"] = state.get("rounds", 0) + 1
+            accepted_ids = {
+                call["id"] for message in state["history"] for call in message.get("tool_calls", [])
+            }
+            if any(call.id in accepted_ids for call in response.tool_calls):
+                raise WorkflowExecutionError("Provider reused a tool call identifier")
+            try:
+                self.registry.validate_calls(response.tool_calls, allowed_tool_ids=allowed_ids)
+            except ToolArgumentsValidationError as error:
+                await self._repair_tool_response(node, state, error.feedback, error.issues)
+                continue
+            self._preflight_tool_budget(node, response.tool_calls)
             state["history"].append(response.as_message().model_dump(mode="json"))
             state["pending_calls"] = [call.model_dump(mode="json") for call in response.tool_calls]
             state["next_call"] = 0
@@ -458,6 +493,84 @@ class WorkflowExecutor:
                 raise WorkflowExecutionError("Run token budget exceeded")
             if state.get("done"):
                 return str(state["result"])
+
+    def _account_response(self, response: Any, remaining_tokens: int) -> None:
+        if self._metered:
+            return
+        reported_tokens = response.usage.total_tokens
+        accounted_tokens = response.accounted_tokens
+        if accounted_tokens is None:
+            # Injected services can omit accounting metadata; absent usage
+            # consumes the remaining local budget instead of fabricating zero.
+            accounted_tokens = reported_tokens if reported_tokens is not None else remaining_tokens
+        budget_before = self.checkpoint.usage.get(
+            "budget_tokens", self.checkpoint.usage.get("total_tokens", 0)
+        )
+        self.checkpoint.usage["budget_tokens"] = budget_before + accounted_tokens
+        self.checkpoint.usage["total_tokens"] = self.checkpoint.usage.get("total_tokens", 0) + (
+            reported_tokens or 0
+        )
+        self.checkpoint.usage["unknown_calls"] = (
+            self.checkpoint.usage.get("unknown_calls", 0)
+            + response.unknown_calls
+            + int(reported_tokens is None and response.accounted_tokens is None)
+        )
+
+    def _preflight_tool_budget(self, node: WorkflowNodeSpec, calls: list[ToolCall]) -> None:
+        assert self.workflow is not None
+        needed = sum(
+            f"{node.id}:{call.id}" not in self.checkpoint.reserved_tool_calls for call in calls
+        )
+        if self.checkpoint.tool_calls + needed > self.workflow.limits.max_tool_calls:
+            raise WorkflowExecutionError("Run tool-call budget exceeded")
+
+    async def _repair_tool_response(
+        self,
+        node: WorkflowNodeSpec,
+        state: dict[str, Any],
+        feedback: str,
+        issues: tuple[dict[str, Any], ...],
+    ) -> None:
+        assert self.workflow is not None
+        repairs = state.get("repairs", 0)
+        can_retry = repairs < self.workflow.limits.max_tool_repairs
+        state["pending_calls"] = []
+        state["next_call"] = 0
+        if can_retry:
+            state["repairs"] = repairs + 1
+            state["history"].append(
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=(
+                        "The previous tool-call response was rejected before execution. "
+                        + feedback
+                        + " Regenerate the complete response using only the available tools."
+                    ),
+                ).model_dump(mode="json")
+            )
+        # Save the correction and its counter before another billable request.
+        await self._persist(RunStatus.RUNNING)
+        await self._event(
+            EventType.TOOL_VALIDATION_FAILED,
+            {
+                "node_id": node.id,
+                "repair_count": state.get("repairs", 0),
+                "will_retry": can_retry,
+                "issues": list(issues),
+            },
+        )
+        if not can_retry:
+            raise WorkflowExecutionError("Tool argument repair budget exhausted")
+
+    def _tool_context(self, node_id: str, call_id: str) -> ToolExecutionContext:
+        return ToolExecutionContext(
+            run_id=self.run_id,
+            workflow_id=self.run.workflow_id,
+            node_id=node_id,
+            tool_call_id=call_id,
+            owner_id=getattr(self.run, "billing_owner_id", None),
+            idempotency_key=f"{self.run_id}:{node_id}:{call_id}",
+        )
 
     async def _load_agent(self, agent_id: uuid.UUID | None) -> Any:
         snapshot = self.run.agent_snapshots.get(str(agent_id))
@@ -494,6 +607,7 @@ class WorkflowExecutor:
             allowed_tool_ids=[node.tool_id],
             timeout=self.workflow.limits.tool_timeout_seconds,
             idempotency_key=f"{self.run_id}:{node.id}:tool",
+            execution_context=self._tool_context(node.id, "tool"),
         )
         state.update(done=True, result=result)
         await self._persist(RunStatus.RUNNING)

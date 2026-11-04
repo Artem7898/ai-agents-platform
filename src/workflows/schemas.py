@@ -45,6 +45,7 @@ class ExecutionLimits(BaseModel):
     max_steps: int = Field(default=1000, ge=1, le=10000)
     max_duration_seconds: float = Field(default=300, gt=0, le=3600)
     max_tool_calls: int = Field(default=32, ge=0, le=1000)
+    max_tool_repairs: int = Field(default=2, ge=0, le=5, strict=True)
     max_tokens: int = Field(default=32000, ge=1, le=1000000)
     max_output_tokens: int = Field(default=1024, ge=1, le=32000)
     tool_timeout_seconds: float = Field(default=30, gt=0, le=300)

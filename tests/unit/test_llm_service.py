@@ -44,6 +44,7 @@ async def test_tool_response_preserves_call_id_arguments_and_usage(agent, provid
         calls=[
             SimpleNamespace(
                 id="call_weather_1",
+                type="function",
                 function=SimpleNamespace(name="weather", arguments='{"city":"Moscow"}'),
             )
         ],
@@ -93,6 +94,7 @@ async def test_non_object_tool_arguments_fail_before_dispatch(agent, provider, r
         calls=[
             SimpleNamespace(
                 id="call_invalid",
+                type="function",
                 function=SimpleNamespace(name="weather", arguments=raw_arguments),
             )
         ],
