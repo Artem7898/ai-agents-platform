@@ -175,7 +175,7 @@ async def test_failed_client_replacement_preserves_existing_cached_client(
 
     monkeypatch.setattr(clients, "_create_client", broken_factory)
     settings.LLM_RUNTIME_SECRETS = {"cloud": SecretStr("test-rotated-credential")}
-    with pytest.raises(RuntimeError, match="initialization"):
+    with pytest.raises(RuntimeConfigurationError, match="initialization"):
         async with pool.lease(spec):
             pytest.fail("Broken replacement was accepted")
     original.close.assert_not_awaited()

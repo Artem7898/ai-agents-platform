@@ -2,8 +2,9 @@
 
 An agent can select an OpenAI, Ollama or OpenAI-compatible runtime while using
 the same `AsyncOpenAI` transport. A runtime records its endpoint, permitted
-models and supported request features. Credentials stay in server settings;
-the database holds only a credential alias.
+models and supported request features. Credentials resolve from protected
+settings or an approved external Secret Manager; the database holds only a
+credential alias.
 
 This adds managed runtime selection and compatibility profiles. Existing
 agents with `runtime_id: null` continue to use the global `OPENAI_API_KEY` and
@@ -43,17 +44,22 @@ workflow prompts and credentials. Listing an endpoint grants outbound access
 to it; it does not verify its model behavior.
 
 The `openai` and `openai_compatible` profiles require `secret_ref`, which must
-resolve in `LLM_RUNTIME_SECRETS`. They do not fall back to the global API key.
+resolve through a server-configured alias. An alias in `LLM_SECRET_BINDINGS`
+selects Vault KV v2, AWS Secrets Manager or Google Secret Manager; aliases
+without an external binding use `LLM_RUNTIME_SECRETS`. An explicit external
+binding never falls back to that settings mapping or the global API key.
 An Ollama runtime can omit `secret_ref`; the transport uses an internal SDK
 placeholder for an endpoint without authentication. Set an alias if the
 Ollama endpoint requires a key.
 
-Settings are loaded at process startup. After changing `.env` or deployment
-secrets, restart the affected web and worker processes. When the resolver sees
-a different credential value, the client registry creates a replacement
-client; an active request keeps its leased client until it finishes. Updating
-an alias does not require putting the key in the database or changing an
-agent's model.
+Settings are loaded at process startup. Changing `.env`, alias bindings or
+environment-provided bootstrap credentials requires process reconfiguration.
+For external bindings, the resolver refreshes the stored LLM key after a
+bounded TTL and creates a replacement client when it observes a new version.
+An active request keeps its leased client until release. A failed refresh
+after expiry blocks new requests rather than reusing an expired key. See
+[Secret Manager and rotation](secret-manager.md) for all three backends,
+optional SDK extras, access policies and the two-phase revocation procedure.
 
 ### Ollama networking
 
@@ -86,7 +92,7 @@ Runtime configuration includes:
 | `name` | Operator-facing runtime name. |
 | `profile` | Provider compatibility profile. |
 | `base_url` | API endpoint from the server allowlist, including `/v1` where required. |
-| `secret_ref` | Write-only alias from the server credential mapping. |
+| `secret_ref` | Write-only alias from the server settings or external-secret bindings. |
 | `allowed_models` | Model names this runtime permits agents to request. |
 | `capabilities` | Explicit declarations of supported request features. |
 | `enabled` | Whether the runtime may serve new provider calls. |
@@ -188,10 +194,12 @@ calls from a queued or resumed run; a request already sent to the provider
 cannot be recalled. Endpoint allowlist checks also remain live.
 
 Credentials are resolved at dispatch rather than frozen in a run. Rotation
-of a credential under the same alias can apply to existing runs after the
-updated settings are available in the process. Rotation does not change the
-run's model or endpoint. There is no automatic failover to another provider
-when a key, model or endpoint fails.
+under an external alias applies to subsequent leases after its cache refresh,
+including queued or resumed runs. Rotation does not change the run's model or
+endpoint. Backend access revocation is bounded by the positive-cache TTL;
+use the live runtime disable control for an emergency stop of new workflow
+calls. There is no automatic failover to another secret backend or LLM
+provider when access, a key, model or endpoint fails.
 
 ## Compatibility checks
 
@@ -213,12 +221,11 @@ The runtime registry and profile tests establish the basis for switching
 between approved endpoints. The remaining work needs separate acceptance
 criteria:
 
-1. **Secret Manager integration and rotation operations.** The settings
-   mapping is the minimal credential resolver needed by managed runtimes.
-   Add a provider-specific Secret Manager adapter, scoped access policies,
-   audited rotation/revocation and a documented refresh procedure. Test
-   unavailable secrets and rotation with requests in flight. Avoid resolving
-   arbitrary environment-variable names supplied by an API caller.
+1. **Deployment-specific secret operations.**
+   [Vault, AWS and GCP adapters](secret-manager.md), bounded cache refresh and
+   lease-safe key rotation are implemented. Provision actual backend
+   identities, scoped read policies, secrets, network access and log retention
+   in the target environment, and exercise its rotation/revocation procedure.
 2. **Subscription billing and provider reconciliation, if required.**
    [Call accounting and quotas](llm-usage.md),
    [bounded tool repair](schema-first-tools.md) and

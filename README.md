@@ -4,7 +4,7 @@ A Django 5.2 LTS backend for persisted AI workflows, with Django REST Framework 
 
 The project provides a foundation for authenticated workflow execution, graph validation, checkpoints and recovery. External tool effects need their own idempotency guarantees: retrying a message cannot guarantee exactly-once effects in another system. Latency, throughput and availability depend on the deployment and must be measured there.
 
-[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md)
+[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md)
 
 ## Local setup
 
@@ -101,6 +101,8 @@ Runs preserve a snapshot of the workflow definition so editing a workflow does n
 
 An agent can select a managed runtime through `runtime_id`: OpenAI, Ollama, or an OpenAI-compatible endpoint. Runtime profiles declare supported request features and allowed models; endpoint URLs and credential aliases are controlled by the server operator. Agents without a runtime keep the global `OPENAI_API_KEY` / `OPENAI_BASE_URL` configuration. See [LLM runtimes](docs/llm-runtimes.md) for setup, access controls, run snapshots, compatibility testing and follow-up work.
 
+Managed credential aliases can use Vault KV v2, AWS Secrets Manager and Google Secret Manager concurrently. [Secret Manager and rotation](docs/secret-manager.md) covers server bindings, SDK extras, access policies and TTL-bound key rotation without interrupting active client leases.
+
 ## LLM usage and quotas
 
 Workflow calls now have an owner-scoped invocation ledger, concurrency-safe request/token quotas, and optional versioned cost estimates. Staff manages quota policies; unknown provider usage stays unresolved until reconciliation. See [LLM usage and quotas](docs/llm-usage.md) for API access, reservation semantics and operational limits.
@@ -110,7 +112,8 @@ Workflow calls now have an owner-scoped invocation ledger, concurrency-safe requ
 Use a PostgreSQL test database and a role allowed to create the test database:
 
 ```sh
-DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen pytest
+uv sync --frozen --all-extras
+DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen --all-extras pytest
 uv run --frozen python manage.py makemigrations --check --dry-run
 uv run --frozen ruff check .
 uv run --frozen pyright
@@ -118,7 +121,7 @@ uv build --wheel
 uv run --frozen python scripts/wheel_smoke.py
 ```
 
-The wheel smoke check installs locked runtime dependencies and the wheel into a fresh temporary environment, then imports the ASGI application from outside the checkout. It needs package/Git network access. CI also checks migrations and runs the suite against PostgreSQL 16.
+The wheel smoke check verifies both the base installation and the AWS/GCP extras in an isolated environment outside the checkout. It needs package/Git network access. CI also checks migrations and runs the suite against PostgreSQL 16 with all extras installed.
 
 ## Production
 

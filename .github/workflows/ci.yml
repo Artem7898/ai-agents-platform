@@ -32,11 +32,11 @@ jobs:
           version: "0.12.23"
           enable-cache: true
       - run: uv python install 3.12
-      - run: uv sync --frozen --extra dev --python 3.12
-      - run: uv run --frozen ruff check .
-      - run: uv run --frozen pyright
-      - run: uv run --frozen python manage.py check
-      - run: uv run --frozen python manage.py makemigrations --check --dry-run
-      - run: uv run --frozen pytest
+      - run: uv sync --frozen --all-extras --python 3.12
+      - run: uv run --frozen --all-extras ruff check .
+      - run: uv run --frozen --all-extras pyright
+      - run: uv run --frozen --all-extras python manage.py check
+      - run: uv run --frozen --all-extras python manage.py makemigrations --check --dry-run
+      - run: uv run --frozen --all-extras pytest
       - run: uv build --wheel
-      - run: uv run --frozen python scripts/wheel_smoke.py
+      - run: uv run --frozen --all-extras python scripts/wheel_smoke.py

@@ -20,14 +20,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -f /run/secrets/proxy_ca ]; then \
       export SSL_CERT_FILE=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; \
     fi; \
-    uv sync --frozen --no-dev --no-install-project
+    uv sync --frozen --no-dev --no-install-project --extra aws --extra gcp
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then \
       export SSL_CERT_FILE=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; \
     fi; \
-    uv sync --frozen --no-dev \
+    uv sync --frozen --no-dev --extra aws --extra gcp \
     && DJANGO_SETTINGS_MODULE=config.settings.dev .venv/bin/python manage.py collectstatic --noinput \
     && groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --no-create-home app \

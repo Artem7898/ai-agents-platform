@@ -4,7 +4,7 @@ Backend для сохраняемых AI workflow: Django 5.2 LTS, DRF для CR
 
 Это основа для выполнения графов с аутентификацией, checkpoint и восстановлением задач. Повторная доставка команды не гарантирует однократный внешний эффект: инструменты, которые меняют сторонние системы, должны поддерживать идемпотентность. Показатели задержки, пропускной способности и доступности необходимо измерять в конкретной среде.
 
-[English](README.md) · [Эксплуатация и восстановление](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md)
+[English](README.md) · [Эксплуатация и восстановление](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md)
 
 ## Локальный запуск
 
@@ -101,6 +101,8 @@ LLM-узел может выбрать версию серверной схем�
 
 Агент может выбрать управляемый runtime через `runtime_id`: OpenAI, Ollama или OpenAI-совместимый endpoint. Профиль runtime задаёт поддерживаемые возможности запросов и допустимые модели; адреса endpoint и псевдонимы ключей контролирует оператор сервера. Агент без runtime использует прежние глобальные `OPENAI_API_KEY` / `OPENAI_BASE_URL`. [Руководство LLM runtimes](docs/llm-runtimes.md) описывает настройку, права доступа, снимки запусков, проверки совместимости и оставшиеся задачи.
 
+Псевдонимы ключей управляемых runtime могут одновременно использовать Vault KV v2, AWS Secrets Manager и Google Secret Manager. [Secret Manager и ротация](docs/secret-manager.md) описывает серверные привязки, SDK extras, права доступа и обновление ключей по TTL с сохранением активных клиентских запросов.
+
 ## Учёт LLM и квоты
 
 Вызовы workflow учитываются в журнале владельца с квотами запросов и токенов и необязательной оценкой стоимости по версиям тарифов. Staff управляет квотами; неизвестный usage остаётся неразрешённым до сверки оператором. [Учёт LLM и квоты](docs/llm-usage.md) описывает API, резервирование и эксплуатационные ограничения.
@@ -110,7 +112,8 @@ LLM-узел может выбрать версию серверной схем�
 Для интеграционной проверки нужна PostgreSQL и роль с правом создания тестовой БД:
 
 ```sh
-DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen pytest
+uv sync --frozen --all-extras
+DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen --all-extras pytest
 uv run --frozen python manage.py makemigrations --check --dry-run
 uv run --frozen ruff check .
 uv run --frozen pyright
@@ -118,7 +121,7 @@ uv build --wheel
 uv run --frozen python scripts/wheel_smoke.py
 ```
 
-Wheel smoke устанавливает зафиксированные runtime-зависимости и wheel в новый временный venv, затем импортирует ASGI из каталога вне checkout. Для него нужен сетевой доступ к пакетам и Git. CI также проверяет миграции и запускает тесты с PostgreSQL 16.
+Wheel smoke проверяет базовую установку и дополнительные зависимости AWS/GCP в изолированной среде вне checkout. Для него нужен сетевой доступ к пакетам и Git. CI также проверяет миграции и запускает тесты с PostgreSQL 16 со всеми дополнительными зависимостями.
 
 ## Production
 

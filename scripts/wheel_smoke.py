@@ -38,6 +38,55 @@ def main() -> None:
             ["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)],
             check=True,
         )
+        # The base wheel must import without optional cloud SDKs. Then verify
+        # its published extras independently in the same isolated directory.
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', "
+                "'config.settings.test'); import django; django.setup(); "
+                "import config.asgi; import src.runs.executor; "
+                "print('wheel base import smoke passed')",
+            ],
+            cwd=root,
+            check=True,
+        )
+        cloud_requirements = subprocess.check_output(
+            [
+                "uv",
+                "export",
+                "--frozen",
+                "--no-dev",
+                "--no-emit-project",
+                "--extra",
+                "aws",
+                "--extra",
+                "gcp",
+                "--format",
+                "requirements-txt",
+            ],
+            cwd=project,
+        )
+        locked.write_bytes(cloud_requirements)
+        subprocess.run(["uv", "pip", "sync", "--python", str(python), str(locked)], check=True)
+        subprocess.run(
+            ["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)],
+            check=True,
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "import boto3; import google.cloud.secretmanager; import google_crc32c; "
+                "import src.runtimes.aws_secrets; import src.runtimes.gcp_secrets; "
+                "import src.runtimes.vault; print('wheel secret extras smoke passed')",
+            ],
+            cwd=root,
+            check=True,
+        )
         # -I prevents PYTHONPATH or the checkout's cwd from hiding a broken wheel.
         subprocess.run(
             [
