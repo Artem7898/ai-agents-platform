@@ -6,12 +6,13 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 import src.agents.llm_service as llm_module
 from src.agents.llm_service import (
     LLMResponseError,
     LLMService,
+    StructuredOutputValidationError,
     TokenUsage,
     ToolResponseValidationError,
 )
@@ -265,8 +266,9 @@ async def test_invalid_structured_completion_is_validated_locally_without_hidden
         score: int = Field(le=10)
 
     provider.return_value = response([])
+    provider.return_value.choices[0].finish_reason = "stop"
     provider.return_value.choices[0].message.content = '{"score":11}'
-    with pytest.raises(ValidationError):
+    with pytest.raises(StructuredOutputValidationError):
         await LLMService().generate_structured(agent, "Score", Score)
     provider.assert_awaited_once()
     assert provider.await_args.kwargs["response_format"]["type"] == "json_schema"

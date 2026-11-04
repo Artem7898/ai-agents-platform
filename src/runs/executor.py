@@ -21,7 +21,11 @@ from typing import Any, Protocol
 import structlog
 from django.db import DatabaseError
 
-from src.agents.llm_service import LLMService, ToolResponseValidationError
+from src.agents.llm_service import (
+    LLMService,
+    StructuredOutputValidationError,
+    ToolResponseValidationError,
+)
 from src.agents.schemas import AgentSpec, ChatMessage, MessageRole, ToolCall
 from src.agents.tool_context import ToolExecutionContext
 from src.agents.tool_registry import ToolArgumentsValidationError, ToolRegistry
@@ -213,6 +217,7 @@ class WorkflowExecutor:
         # created snapshots opt into the new repair default.
         snapshot = copy.deepcopy(snapshot)
         snapshot.setdefault("limits", {}).setdefault("max_tool_repairs", 0)
+        snapshot["limits"].setdefault("max_output_repairs", 0)
         self.workflow = WorkflowSpec.model_validate(snapshot)
         if self.workflow.id != self.run.workflow_id:
             raise WorkflowExecutionError("Snapshot does not match the run workflow")
@@ -352,7 +357,7 @@ class WorkflowExecutor:
             await self._event(EventType.NODE_FAILED, {"node_id": node.id, "error": str(error)})
             raise WorkflowExecutionError(f"Node {node.id} failed: {error}") from error
 
-    async def _handle_llm_call(self, node: WorkflowNodeSpec) -> str:
+    async def _handle_llm_call(self, node: WorkflowNodeSpec) -> str | dict[str, Any]:
         assert self.workflow is not None
         agent = await self._load_agent(node.agent_id)
         agent_spec = agent.to_spec()
@@ -360,6 +365,8 @@ class WorkflowExecutor:
             raise WorkflowExecutionError("Agent does not belong to the workflow owner")
         if agent.status != "active":
             raise WorkflowExecutionError("LLM nodes require an active agent")
+        if node.output_schema is not None:
+            return await self._handle_structured_llm_call(node, agent_spec)
         allowed_ids = agent_spec.tool_ids
         tools = self.registry.get_specs(allowed_tool_ids=allowed_ids)
         state = self.checkpoint.node_states.setdefault(node.id, {})
@@ -493,6 +500,136 @@ class WorkflowExecutor:
                 raise WorkflowExecutionError("Run token budget exceeded")
             if state.get("done"):
                 return str(state["result"])
+
+    async def _handle_structured_llm_call(
+        self, node: WorkflowNodeSpec, agent_spec: AgentSpec
+    ) -> dict[str, Any]:
+        """Produce one schema-bound object, with no tool dispatch or text fallback."""
+        from src.workflows.output_schemas import OutputSchemaRegistry
+
+        assert self.workflow is not None
+        target_schema = OutputSchemaRegistry.resolve_snapshot(
+            node, getattr(self.run, "output_schema_snapshots", {})
+        )
+        state = self.checkpoint.node_states.setdefault(node.id, {})
+        if state.get("pending_calls"):
+            raise WorkflowExecutionError("Structured output nodes cannot restore pending tools")
+        if state.get("done"):
+            # A crash can leave a validated result saved just before NODE_EXIT.
+            # Preserve its object type and never dispatch another provider call.
+            return self._saved_structured_result(state.get("result"), target_schema)
+        if "history" not in state:
+            prompt = self._resolve_context_vars(
+                node.config.get("prompt_template", "{input.prompt}")
+            )
+            state["history"] = [
+                ChatMessage(role=MessageRole.USER, content=str(prompt)).model_dump(mode="json")
+            ]
+        while True:
+            await self._check_cancelled()
+            await self._refresh_usage()
+            remaining_tokens = self.workflow.limits.max_tokens - self.checkpoint.usage.get(
+                "budget_tokens", self.checkpoint.usage.get("total_tokens", 0)
+            )
+            if remaining_tokens <= 0:
+                raise WorkflowExecutionError("Run token budget exceeded")
+            if state.get("output_rounds", 0) >= self.workflow.limits.max_output_repairs + 1:
+                raise WorkflowExecutionError("Structured output round budget exceeded")
+            runtime_kwargs: dict[str, Any] = {}
+            if self._metered:
+                from src.usage.contracts import InvocationContext
+
+                runtime_kwargs["invocation_context"] = InvocationContext(
+                    run_id=self.run_id,
+                    node_id=node.id,
+                    logical_call=state.get("output_rounds", 0),
+                    execution_token=self.execution_token,
+                )
+            if agent_spec.runtime_id is not None:
+                from src.runtimes.access import get_run_runtime
+
+                runtime_kwargs["runtime"] = await get_run_runtime(self.run, agent_spec)
+            # Re-check the live registered contract before every request. A
+            # queued correction cannot silently follow a changed schema version.
+            target_schema = OutputSchemaRegistry.resolve_snapshot(
+                node, getattr(self.run, "output_schema_snapshots", {})
+            )
+            try:
+                response = await self.llm_service.generate_structured_response(
+                    agent_spec=agent_spec,
+                    prompt="",
+                    target_schema=target_schema,
+                    context_history=[
+                        ChatMessage.model_validate(message) for message in state["history"]
+                    ],
+                    max_output_tokens=min(self.workflow.limits.max_output_tokens, remaining_tokens),
+                    **runtime_kwargs,
+                )
+            except StructuredOutputValidationError as error:
+                self._account_response(error, remaining_tokens)
+                state["output_rounds"] = state.get("output_rounds", 0) + 1
+                await self._repair_structured_response(node, state, error.feedback, error.issues)
+                continue
+            self._account_response(response, remaining_tokens)
+            state["output_rounds"] = state.get("output_rounds", 0) + 1
+            result = self._saved_structured_result(response.data, target_schema)
+            state.update(done=True, result=result)
+            await self._persist(RunStatus.RUNNING)
+            if self.checkpoint.usage["budget_tokens"] > self.workflow.limits.max_tokens:
+                raise WorkflowExecutionError("Run token budget exceeded")
+            return result
+
+    @staticmethod
+    def _saved_structured_result(value: Any, target_schema: Any) -> dict[str, Any]:
+        """Validate saved JSON without exposing Pydantic's rejected input text."""
+        if not isinstance(value, dict):
+            raise WorkflowExecutionError("Saved structured result must be a JSON object")
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
+            if len(encoded.encode("utf-8")) > 256_000:
+                raise ValueError("Result size limit")
+            target_schema.model_validate_json(encoded, strict=True, extra="forbid")
+        except Exception:
+            raise WorkflowExecutionError(
+                "Saved structured result does not match its frozen contract"
+            ) from None
+        return copy.deepcopy(value)
+
+    async def _repair_structured_response(
+        self,
+        node: WorkflowNodeSpec,
+        state: dict[str, Any],
+        feedback: str,
+        issues: tuple[dict[str, Any], ...],
+    ) -> None:
+        assert self.workflow is not None
+        repairs = state.get("output_repairs", 0)
+        can_retry = repairs < self.workflow.limits.max_output_repairs
+        if can_retry:
+            state["output_repairs"] = repairs + 1
+            state["history"].append(
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=(
+                        "The previous structured response failed output validation. "
+                        + feedback
+                        + " Return a complete JSON object matching the requested output schema."
+                    ),
+                ).model_dump(mode="json")
+            )
+        # Persist the granted correction before any further billable request.
+        await self._persist(RunStatus.RUNNING)
+        await self._event(
+            EventType.OUTPUT_VALIDATION_FAILED,
+            {
+                "node_id": node.id,
+                "repair_count": state.get("output_repairs", 0),
+                "will_retry": can_retry,
+                "issues": list(issues),
+            },
+        )
+        if not can_retry:
+            raise WorkflowExecutionError("Structured output repair budget exhausted")
 
     def _account_response(self, response: Any, remaining_tokens: int) -> None:
         if self._metered:

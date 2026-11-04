@@ -15,6 +15,7 @@ from src.agents.schemas import AgentStatus
 from src.agents.tool_registry import ToolRegistry
 from src.runtimes.access import snapshot_run_runtimes
 from src.workflows.models import Workflow
+from src.workflows.output_schemas import OutputSchemaRegistry
 from src.workflows.schemas import NodeKind, WorkflowSpec
 
 from .models import OutboxMessage, RunEvent, WorkflowRun
@@ -127,6 +128,7 @@ def create_run(
             if existing:
                 return _existing_create(existing, workflow_id, input_data, user)
         spec = workflow.to_spec()
+        output_schemas = OutputSchemaRegistry.snapshot_for_nodes(spec.nodes)
         snapshots = _agent_snapshots(spec, workflow)
         runtimes = snapshot_run_runtimes(snapshots, getattr(workflow, "owner_id"))
         try:
@@ -140,6 +142,7 @@ def create_run(
                     workflow_snapshot=spec.model_dump(mode="json"),
                     agent_snapshots=snapshots,
                     runtime_snapshots=runtimes,
+                    output_schema_snapshots=output_schemas,
                     checkpoint={},
                     status=RunStatus.PENDING.value,
                 )

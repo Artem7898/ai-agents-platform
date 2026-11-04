@@ -162,10 +162,12 @@ on the profile: `max_completion_tokens` for `openai`, `max_tokens` for
 
 `strict_tools` requires `tools` to be enabled.
 
-Returned token usage is still parsed when present. Missing provider usage
-currently produces the existing zero-valued usage result; it is not evidence
-that a request consumed no tokens. The `usage` declaration does not add a
-per-call billing ledger or enforce subscription limits.
+Returned token usage is parsed when present. Missing counters remain null,
+separate from measured zero. Workflow requests enter the
+[invocation ledger](llm-usage.md), including retries and rejected responses;
+unknown usage retains its token reservation. The `usage` capability declares
+provider reporting support and does not itself configure a quota or payment
+subscription.
 
 A request that requires tools, structured output or streaming fails before
 the HTTP request if its capability is disabled. The service does not silently
@@ -217,14 +219,13 @@ criteria:
    audited rotation/revocation and a documented refresh procedure. Test
    unavailable secrets and rotation with requests in flight. Avoid resolving
    arbitrary environment-variable names supplied by an API caller.
-2. **FinOps and bounded Tool Call repair.** Record per-call prompt and
-   completion tokens with provider, model, runtime revision and run/node
-   identity. Distinguish missing usage from measured zero, and account for
-   retries and failed calls before adding pricing, quotas and subscription
-   limits. Add a bounded validation-repair loop only after that accounting is
-   reliable: limit attempts, elapsed time and tokens; retry only eligible
-   validation failures; preserve the tool allowlist and prevent duplicate
-   external effects. Existing validation does not provide this repair loop.
+2. **Subscription billing and provider reconciliation, if required.**
+   [Call accounting and quotas](llm-usage.md),
+   [bounded tool repair](schema-first-tools.md) and
+   [structured workflow results](structured-results.md) are implemented.
+   Payment collection, subscription entitlements, calendar billing cycles
+   and automated reconciliation with actual provider charges remain separate
+   product work; usage-based cost estimates do not implement those features.
 3. **A concrete GGUF hosting pilot.** Choose one model and serving stack
    that exposes the required OpenAI-compatible features. Verify model and
    fine-tune licenses, available memory, context length, startup latency,

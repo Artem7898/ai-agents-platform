@@ -5,7 +5,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing, asynccontextmanager, contextmanager
-from typing import Any, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast
 from uuid import UUID
 
 import httpx
@@ -20,6 +20,7 @@ from src.runtimes.secrets import RuntimeConfigurationError
 from src.usage.contracts import InvocationContext
 from src.usage.transport import metered_completion, metered_stream, normalized_usage
 
+from .json_schema import strict_json_schema as _strict_json_schema
 from .schemas import (
     AgentSpec,
     ChatMessage,
@@ -31,6 +32,7 @@ from .schemas import (
     ToolSpec,
     ToolUseBlock,
 )
+from .validation_feedback import safe_validation_issues
 
 T = TypeVar("T", bound=BaseModel)
 _llm_client: AsyncOpenAI | None = None
@@ -38,6 +40,7 @@ _tool_arguments = TypeAdapter(dict[str, Any])
 _MAX_TOOL_CALLS = 128
 _MAX_TOOL_ARGUMENT_BYTES = 256_000
 _MAX_RESPONSE_ARGUMENT_BYTES = 1_000_000
+_MAX_STRUCTURED_BYTES = 256_000
 _CALL_ID = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
 _TOOL_NAME = re.compile(r"^[a-z0-9_]{1,128}$")
 
@@ -85,6 +88,39 @@ class LLMResponse(BaseModel):
             content=self.content,
             tool_calls=self.tool_calls,
         )
+
+
+class StructuredOutputValidationError(LLMResponseError):
+    """A repairable schema failure with safe feedback and settled accounting."""
+
+    code = "invalid_structured_output"
+
+    def __init__(
+        self,
+        issues: Sequence[dict[str, Any]],
+        *,
+        usage: TokenUsage,
+        accounted_tokens: int | None,
+        unknown_calls: int,
+    ):
+        super().__init__("Provider returned an invalid structured result")
+        self.issues = tuple(issues[:64])
+        self.feedback = (
+            "Return a JSON object matching the output schema. Validation issues: "
+            + json.dumps(self.issues[:8], ensure_ascii=True, separators=(",", ":"))
+        )[:2048]
+        self.usage = usage
+        self.accounted_tokens = accounted_tokens
+        self.unknown_calls = unknown_calls
+
+
+class StructuredLLMResponse(BaseModel, Generic[T]):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    result: T
+    data: dict[str, Any]
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    accounted_tokens: int | None = Field(default=None, ge=0)
+    unknown_calls: int = Field(default=0, ge=0)
 
 
 def get_llm_client() -> AsyncOpenAI:
@@ -175,42 +211,6 @@ def safe_nova_span(name: str, **attributes: str | int | float | bool):
         for key, value in attributes.items():
             span.set_attribute(key, value)
         yield span
-
-
-def _strict_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Normalize Pydantic's object schemas to the provider's strict subset.
-
-    Open-ended mappings cannot be represented in that subset and fail before a
-    provider request. Defaults stay in the domain model, not the wire schema.
-    """
-    result = copy.deepcopy(schema)
-
-    def visit(value: dict[str, Any]) -> None:
-        # Schema containers such as `properties` are maps of user-chosen names;
-        # process their values rather than treating the container as a schema.
-        value.pop("default", None)
-        if value.get("type") == "object" or "properties" in value:
-            extra = value.get("additionalProperties", False)
-            if extra is not False:
-                raise ValueError("Strict output schemas cannot contain open-ended mappings")
-            properties = value.setdefault("properties", {})
-            value["required"] = list(properties)
-            value["additionalProperties"] = False
-        for key in ("properties", "$defs", "definitions"):
-            for child in value.get(key, {}).values():
-                if isinstance(child, dict):
-                    visit(child)
-        for key in ("items", "not", "contains"):
-            child = value.get(key)
-            if isinstance(child, dict):
-                visit(child)
-        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
-            for child in value.get(key, []):
-                if isinstance(child, dict):
-                    visit(child)
-
-    visit(result)
-    return result
 
 
 def _map_tools_to_openai_spec(
@@ -469,12 +469,37 @@ class LLMService:
         runtime: RuntimeSpec | None = None,
         invocation_context: InvocationContext | None = None,
     ) -> T:
+        response = await self.generate_structured_response(
+            agent_spec,
+            prompt,
+            target_schema,
+            context_history,
+            max_output_tokens=max_output_tokens,
+            runtime=runtime,
+            invocation_context=invocation_context,
+        )
+        return response.result
+
+    async def generate_structured_response(
+        self,
+        agent_spec: AgentSpec,
+        prompt: str,
+        target_schema: type[T],
+        context_history: list[ChatMessage | ContentBlock] | None = None,
+        *,
+        max_output_tokens: int = 1024,
+        runtime: RuntimeSpec | None = None,
+        invocation_context: InvocationContext | None = None,
+    ) -> StructuredLLMResponse[T]:
         _check_output_limit(max_output_tokens)
         messages = _build_messages(agent_spec, prompt, context_history)
         parameters = _completion_parameters(agent_spec, runtime, max_output_tokens)
         _require_capability(runtime, "structured_outputs")
         parameters["messages"] = messages
-        schema = _strict_json_schema(target_schema.model_json_schema())
+        domain_schema = target_schema.model_json_schema()
+        schema = _strict_json_schema(domain_schema)
+        if schema.get("type") != "object":
+            raise ValueError("Structured output schemas must have an object root")
         parameters["response_format"] = {
             "type": "json_schema",
             "json_schema": {
@@ -485,13 +510,90 @@ class LLMService:
         }
         with safe_nova_span("llm.generate_structured", model=agent_spec.model_name):
             async with _provider_client(agent_spec, runtime) as client:
-                response, _, _ = await _create_completion(
+                response, accounted, unknown = await _create_completion(
                     client, parameters, runtime, invocation_context, max_output_tokens, "structured"
                 )
-                content = _completion_message(response).content
+                message = _completion_message(response)
+                raw_calls = getattr(message, "tool_calls", None)
+                if raw_calls is not None and raw_calls != []:
+                    raise LLMResponseError("Structured completions cannot request tools")
+                if response.choices[0].finish_reason != "stop":
+                    raise LLMResponseError("Structured completion did not finish successfully")
+                content = message.content
                 if content is None:
                     raise LLMResponseError("Provider returned no structured content")
-                return target_schema.model_validate_json(content, strict=True)
+                try:
+                    content_size = len(content.encode("utf-8"))
+                except UnicodeEncodeError:
+                    raise LLMResponseError(
+                        "Provider returned invalid structured encoding"
+                    ) from None
+                if content_size > _MAX_STRUCTURED_BYTES:
+                    raise LLMResponseError("Structured result exceeds the response size limit")
+                usage = _usage(response)
+                try:
+                    # Pydantic's JSON serializer can turn NaN inside Any into
+                    # null. Check the wire object before that normalization.
+                    wire_data = _tool_arguments.validate_json(content, strict=True)
+                    try:
+                        json.dumps(wire_data, allow_nan=False)
+                    except (TypeError, ValueError, RecursionError):
+                        raise StructuredOutputValidationError(
+                            [{"code": "invalid_json_result", "path": []}],
+                            usage=usage,
+                            accounted_tokens=accounted,
+                            unknown_calls=unknown,
+                        ) from None
+                    result = target_schema.model_validate_json(content, strict=True, extra="forbid")
+                except ValidationError as exc:
+                    raise StructuredOutputValidationError(
+                        safe_validation_issues(exc, domain_schema),
+                        usage=usage,
+                        accounted_tokens=accounted,
+                        unknown_calls=unknown,
+                    ) from None
+                except StructuredOutputValidationError:
+                    raise
+                except Exception:
+                    raise LLMResponseError(
+                        "Structured output validation failed internally"
+                    ) from None
+                try:
+                    data = result.model_dump(mode="json", by_alias=True)
+                except Exception:
+                    # A custom serializer is trusted application code; its
+                    # failure is terminal and must not echo provider values.
+                    raise LLMResponseError("Structured result could not be serialized") from None
+                if not isinstance(data, dict):
+                    raise LLMResponseError("Structured result must serialize to a JSON object")
+                try:
+                    encoded = json.dumps(data, allow_nan=False, ensure_ascii=False).encode("utf-8")
+                except (TypeError, ValueError, RecursionError, UnicodeError):
+                    raise LLMResponseError(
+                        "Structured result violates its serialization contract"
+                    ) from None
+                if len(encoded) > _MAX_STRUCTURED_BYTES:
+                    raise LLMResponseError("Structured result exceeds the response size limit")
+                try:
+                    roundtrip = target_schema.model_validate_json(
+                        encoded, strict=True, extra="forbid"
+                    )
+                    roundtrip_data = roundtrip.model_dump(mode="json", by_alias=True)
+                    if roundtrip_data != data:
+                        raise ValueError("Unstable structured serialization")
+                except Exception:
+                    # Registered schemas must have stable, pure validation and
+                    # serialization. A serializer cannot change the contract.
+                    raise LLMResponseError(
+                        "Structured result violates its serialization contract"
+                    ) from None
+                return StructuredLLMResponse(
+                    result=result,
+                    data=data,
+                    usage=usage,
+                    accounted_tokens=accounted,
+                    unknown_calls=unknown,
+                )
 
     async def stream_raw(
         self,
