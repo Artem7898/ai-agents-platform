@@ -135,6 +135,7 @@ def create_run(
             with transaction.atomic():
                 run = WorkflowRun.objects.create(
                     workflow=workflow,
+                    billing_owner_id=getattr(workflow, "owner_id"),
                     input_data=input_data,
                     workflow_snapshot=spec.model_dump(mode="json"),
                     agent_snapshots=snapshots,

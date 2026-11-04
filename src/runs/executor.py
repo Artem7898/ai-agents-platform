@@ -125,6 +125,7 @@ class WorkflowExecutor:
         llm_service: LLMService | None = None,
         tool_registry: Any = ToolRegistry,
     ):
+        self._metered = persistence is None
         if persistence is None:
             from src.runs import persistence as persistence_module
 
@@ -230,7 +231,13 @@ class WorkflowExecutor:
             raise WorkflowExecutionError("Run node budget exceeded")
         if self.checkpoint.tool_calls > self.workflow.limits.max_tool_calls:
             raise WorkflowExecutionError("Run tool-call budget exceeded")
-        if self.checkpoint.usage.get("total_tokens", 0) > self.workflow.limits.max_tokens:
+        if (
+            not self._metered
+            and self.checkpoint.usage.get(
+                "budget_tokens", self.checkpoint.usage.get("total_tokens", 0)
+            )
+            > self.workflow.limits.max_tokens
+        ):
             raise WorkflowExecutionError("Run token budget exceeded")
         self.context = self.checkpoint.context
         self._elapsed_base = self.checkpoint.elapsed_seconds
@@ -244,6 +251,13 @@ class WorkflowExecutor:
         try:
             async with asyncio.timeout(remaining):
                 await self._persist(RunStatus.RUNNING)
+                if (
+                    self.checkpoint.usage.get(
+                        "budget_tokens", self.checkpoint.usage.get("total_tokens", 0)
+                    )
+                    > self.workflow.limits.max_tokens
+                ):
+                    raise WorkflowExecutionError("Run token budget exceeded")
                 await self._drive()
         except TimeoutError as error:
             raise WorkflowExecutionError("Run time budget exceeded") from error
@@ -380,14 +394,24 @@ class WorkflowExecutor:
                     EventType.TOOL_CALL,
                     {"node_id": node.id, "tool": call["name"], "tool_call_id": call["id"]},
                 )
+            await self._refresh_usage()
             remaining_tokens = self.workflow.limits.max_tokens - self.checkpoint.usage.get(
-                "total_tokens", 0
+                "budget_tokens", self.checkpoint.usage.get("total_tokens", 0)
             )
             if remaining_tokens <= 0:
                 raise WorkflowExecutionError("Run token budget exceeded")
             if state.get("rounds", 0) >= self.workflow.limits.max_tool_calls + 1:
                 raise WorkflowExecutionError("Run LLM-round budget exceeded")
             runtime_kwargs: dict[str, Any] = {}
+            if self._metered:
+                from src.usage.contracts import InvocationContext
+
+                runtime_kwargs["invocation_context"] = InvocationContext(
+                    run_id=self.run_id,
+                    node_id=node.id,
+                    logical_call=state.get("rounds", 0),
+                    execution_token=self.execution_token,
+                )
             if agent_spec.runtime_id is not None:
                 from src.runtimes.access import get_run_runtime
 
@@ -402,9 +426,27 @@ class WorkflowExecutor:
                 max_output_tokens=min(self.workflow.limits.max_output_tokens, remaining_tokens),
                 **runtime_kwargs,
             )
-            self.checkpoint.usage["total_tokens"] = (
-                self.checkpoint.usage.get("total_tokens", 0) + response.usage.total_tokens
-            )
+            if not self._metered:
+                reported_tokens = response.usage.total_tokens
+                accounted_tokens = response.accounted_tokens
+                if accounted_tokens is None:
+                    # Injected services can omit accounting metadata; absent
+                    # usage still consumes the remaining local test budget.
+                    accounted_tokens = (
+                        reported_tokens if reported_tokens is not None else remaining_tokens
+                    )
+                budget_before = self.checkpoint.usage.get(
+                    "budget_tokens", self.checkpoint.usage.get("total_tokens", 0)
+                )
+                self.checkpoint.usage["budget_tokens"] = budget_before + accounted_tokens
+                self.checkpoint.usage["total_tokens"] = self.checkpoint.usage.get(
+                    "total_tokens", 0
+                ) + (reported_tokens or 0)
+                self.checkpoint.usage["unknown_calls"] = (
+                    self.checkpoint.usage.get("unknown_calls", 0)
+                    + response.unknown_calls
+                    + int(reported_tokens is None and response.accounted_tokens is None)
+                )
             state["rounds"] = state.get("rounds", 0) + 1
             state["history"].append(response.as_message().model_dump(mode="json"))
             state["pending_calls"] = [call.model_dump(mode="json") for call in response.tool_calls]
@@ -412,7 +454,7 @@ class WorkflowExecutor:
             if not response.tool_calls:
                 state.update(done=True, result=response.content or "")
             await self._persist(RunStatus.RUNNING)
-            if self.checkpoint.usage["total_tokens"] > self.workflow.limits.max_tokens:
+            if self.checkpoint.usage["budget_tokens"] > self.workflow.limits.max_tokens:
                 raise WorkflowExecutionError("Run token budget exceeded")
             if state.get("done"):
                 return str(state["result"])
@@ -507,7 +549,34 @@ class WorkflowExecutor:
         self.checkpoint.elapsed_seconds = self._elapsed_base + time.monotonic() - self._timer
         return self.checkpoint.model_dump(mode="json")
 
+    async def _refresh_usage(self) -> None:
+        if not self._metered:
+            return
+        from src.usage.reporting import run_usage
+
+        totals = await run_usage(self.run_id)
+        usage = self.checkpoint.usage
+        # Freeze pre-ledger consumption before the first metered dispatch. The
+        # baseline is persisted with the running checkpoint, then combined with
+        # ledger totals on every refresh, never incremented a second time.
+        for field in ("budget_tokens", "total_tokens", "unknown_calls"):
+            baseline = {
+                "budget_tokens": "ledger_base_tokens",
+                "total_tokens": "ledger_base_reported_tokens",
+                "unknown_calls": "ledger_base_unknown_calls",
+            }[field]
+            if baseline not in usage:
+                usage[baseline] = (
+                    usage.get(
+                        field, usage.get("total_tokens", 0) if field == "budget_tokens" else 0
+                    )
+                    if totals["calls"] == 0
+                    else 0
+                )
+            usage[field] = usage[baseline] + totals[field]
+
     async def _persist(self, status: RunStatus, output: dict[str, Any] | None = None) -> None:
+        await self._refresh_usage()
         await self.persistence.save_progress(
             self.run_id,
             status=status.value,

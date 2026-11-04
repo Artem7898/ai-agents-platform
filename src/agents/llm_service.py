@@ -3,8 +3,9 @@
 import copy
 import json
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 import httpx
 from openai import AsyncOpenAI, OpenAIError
@@ -15,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from src.runtimes.clients import close_runtime_clients, runtime_client
 from src.runtimes.schemas import RuntimeSpec
 from src.runtimes.secrets import RuntimeConfigurationError
+from src.usage.contracts import InvocationContext
+from src.usage.transport import metered_completion, metered_stream, normalized_usage
 
 from .schemas import (
     AgentSpec,
@@ -38,9 +41,9 @@ class LLMResponseError(ValueError):
 
 class TokenUsage(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    prompt_tokens: int = Field(default=0, ge=0)
-    completion_tokens: int = Field(default=0, ge=0)
-    total_tokens: int = Field(default=0, ge=0)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
 
 
 class LLMResponse(BaseModel):
@@ -48,6 +51,8 @@ class LLMResponse(BaseModel):
     content: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     usage: TokenUsage = Field(default_factory=TokenUsage)
+    accounted_tokens: int | None = Field(default=None, ge=0)
+    unknown_calls: int = Field(default=0, ge=0)
 
     def as_message(self) -> ChatMessage:
         return ChatMessage(
@@ -291,17 +296,34 @@ def _completion_message(response: Any) -> Any:
 
 
 def _usage(response: Any) -> TokenUsage:
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return TokenUsage()
-    return TokenUsage(
-        prompt_tokens=usage.prompt_tokens,
-        completion_tokens=usage.completion_tokens,
-        total_tokens=usage.total_tokens,
+    return TokenUsage(**(normalized_usage(response) or {}))
+
+
+async def _create_completion(
+    client: AsyncOpenAI,
+    parameters: dict[str, Any],
+    runtime: RuntimeSpec | None,
+    invocation_context: InvocationContext | None,
+    max_output_tokens: int,
+    operation: str,
+) -> tuple[Any, int | None, int]:
+    if invocation_context is None:
+        return await client.chat.completions.create(**parameters), None, 0
+    result = await metered_completion(
+        client,
+        parameters,
+        invocation_context,
+        runtime_id=UUID(runtime.id) if runtime else None,
+        provider=runtime.profile if runtime else "openai",
+        max_output_tokens=max_output_tokens,
+        operation=operation,
     )
+    return result.response, result.accounted_tokens, result.unknown_calls
 
 
 class LLMService:
+    """Direct calls remain unmetered; platform workflow execution supplies context."""
+
     async def generate_with_tools(
         self,
         agent_spec: AgentSpec,
@@ -311,6 +333,7 @@ class LLMService:
         *,
         max_output_tokens: int = 1024,
         runtime: RuntimeSpec | None = None,
+        invocation_context: InvocationContext | None = None,
     ) -> LLMResponse:
         _check_output_limit(max_output_tokens)
         messages = _build_messages(agent_spec, prompt, context_history)
@@ -326,7 +349,9 @@ class LLMService:
             )
         with safe_nova_span("llm.generate_with_tools", model=agent_spec.model_name):
             async with _provider_client(agent_spec, runtime) as client:
-                response = await client.chat.completions.create(**parameters)
+                response, accounted, unknown = await _create_completion(
+                    client, parameters, runtime, invocation_context, max_output_tokens, "tools"
+                )
                 message = _completion_message(response)
                 calls = []
                 for call in message.tool_calls or []:
@@ -342,7 +367,11 @@ class LLMService:
                 if message.content is None and not calls:
                     raise LLMResponseError("Provider returned an empty completion")
                 return LLMResponse(
-                    content=message.content, tool_calls=calls, usage=_usage(response)
+                    content=message.content,
+                    tool_calls=calls,
+                    usage=_usage(response),
+                    accounted_tokens=accounted,
+                    unknown_calls=unknown,
                 )
 
     async def generate_structured(
@@ -354,6 +383,7 @@ class LLMService:
         *,
         max_output_tokens: int = 1024,
         runtime: RuntimeSpec | None = None,
+        invocation_context: InvocationContext | None = None,
     ) -> T:
         _check_output_limit(max_output_tokens)
         messages = _build_messages(agent_spec, prompt, context_history)
@@ -371,7 +401,9 @@ class LLMService:
         }
         with safe_nova_span("llm.generate_structured", model=agent_spec.model_name):
             async with _provider_client(agent_spec, runtime) as client:
-                response = await client.chat.completions.create(**parameters)
+                response, _, _ = await _create_completion(
+                    client, parameters, runtime, invocation_context, max_output_tokens, "structured"
+                )
                 content = _completion_message(response).content
                 if content is None:
                     raise LLMResponseError("Provider returned no structured content")
@@ -385,25 +417,48 @@ class LLMService:
         *,
         max_output_tokens: int = 1024,
         runtime: RuntimeSpec | None = None,
+        invocation_context: InvocationContext | None = None,
     ) -> AsyncIterator[str]:
         _check_output_limit(max_output_tokens)
         messages = _build_messages(agent_spec, prompt, context_history)
         parameters = _completion_parameters(agent_spec, runtime, max_output_tokens)
         _require_capability(runtime, "streaming")
         parameters.update(messages=messages, stream=True)
-        if runtime is not None and runtime.capabilities.usage:
+        if (runtime is not None and runtime.capabilities.usage) or (
+            runtime is None and invocation_context is not None
+        ):
             parameters["stream_options"] = {"include_usage": True}
         with safe_nova_span("llm.stream_raw", model=agent_spec.model_name):
             async with _provider_client(agent_spec, runtime) as client:
+                if invocation_context is not None:
+                    chunks = metered_stream(
+                        client,
+                        parameters,
+                        invocation_context,
+                        runtime_id=UUID(runtime.id) if runtime else None,
+                        provider=runtime.profile if runtime else "openai",
+                        max_output_tokens=max_output_tokens,
+                    )
+                    async with aclosing(chunks):
+                        async for chunk in chunks:
+                            text = _stream_content(chunk)
+                            if text:
+                                yield text
+                    return
                 stream = await client.chat.completions.create(**parameters)
                 try:
                     async for chunk in stream:
-                        if not chunk.choices:
-                            continue
-                        choice = chunk.choices[0]
-                        if choice.finish_reason in ("length", "content_filter"):
-                            raise LLMResponseError(f"Stream did not finish: {choice.finish_reason}")
-                        if choice.delta.content:
-                            yield choice.delta.content
+                        text = _stream_content(chunk)
+                        if text:
+                            yield text
                 finally:
                     await stream.close()
+
+
+def _stream_content(chunk: Any) -> str | None:
+    if not chunk.choices:
+        return None
+    choice = chunk.choices[0]
+    if choice.finish_reason in ("length", "content_filter"):
+        raise LLMResponseError(f"Stream did not finish: {choice.finish_reason}")
+    return choice.delta.content
