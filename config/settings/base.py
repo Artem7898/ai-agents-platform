@@ -1,11 +1,12 @@
 """Shared settings. Production requirements are validated in prod.py."""
 
+import re
 from pathlib import Path
 from typing import Any
 
 import dj_database_url
 import structlog
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from structlog.types import EventDict
 
@@ -18,6 +19,7 @@ class EnvSettings(BaseSettings):
         env_file_encoding="utf-8",
         env_ignore_empty=True,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     SECRET_KEY: str = "django-insecure-local-development-only"
@@ -36,11 +38,32 @@ class EnvSettings(BaseSettings):
     OPENAI_BASE_URL: str | None = None
     LLM_ALLOWED_BASE_URLS: list[str] = ["https://api.openai.com/v1"]
     LLM_RUNTIME_SECRETS: dict[str, SecretStr] = {}
+    LLM_SECRET_BINDINGS: dict[str, dict[str, Any]] = {}
+    LLM_SECRET_CACHE_TTL_SECONDS: float = Field(default=30, ge=0, le=300)
+    LLM_SECRET_CACHE_MAX_ENTRIES: int = Field(default=128, ge=1, le=1024)
+    LLM_SECRET_TIMEOUT_SECONDS: float = Field(default=5, ge=0.1, le=30)
+    LLM_VAULT_URL: str = ""
+    LLM_VAULT_MOUNT: str = "secret"
+    LLM_VAULT_NAMESPACE: str = ""
+    LLM_VAULT_TOKEN: SecretStr | None = None
+    LLM_VAULT_TOKEN_FILE: str | None = None
+    LLM_AWS_REGION: str | None = None
+    LLM_GCP_PROJECT: str | None = None
     OUTBOX_LEASE_SECONDS: float = Field(default=600, ge=3, le=86400)
     OUTBOX_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=100)
     LLM_TRANSPORT_MAX_RETRIES: int = Field(default=2, ge=0, le=2)
     LLM_RETRY_BASE_SECONDS: float = Field(default=0.25, ge=0, le=10)
     LLM_RESERVATION_OVERHEAD_TOKENS: int = Field(default=512, ge=0, le=8192)
+
+    @field_validator("LLM_SECRET_BINDINGS")
+    @classmethod
+    def validate_secret_bindings(cls, bindings):
+        for alias, binding in bindings.items():
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", alias) is None:
+                raise ValueError("Secret aliases must be bounded identifiers")
+            if binding.get("backend") not in {"vault", "aws", "gcp"}:
+                raise ValueError("Secret bindings require a supported backend")
+        return bindings
 
 
 env = EnvSettings()
@@ -50,6 +73,17 @@ OPENAI_API_KEY = env.OPENAI_API_KEY.get_secret_value() if env.OPENAI_API_KEY els
 OPENAI_BASE_URL = env.OPENAI_BASE_URL
 LLM_ALLOWED_BASE_URLS = env.LLM_ALLOWED_BASE_URLS
 LLM_RUNTIME_SECRETS = env.LLM_RUNTIME_SECRETS
+LLM_SECRET_BINDINGS = env.LLM_SECRET_BINDINGS
+LLM_SECRET_CACHE_TTL_SECONDS = env.LLM_SECRET_CACHE_TTL_SECONDS
+LLM_SECRET_CACHE_MAX_ENTRIES = env.LLM_SECRET_CACHE_MAX_ENTRIES
+LLM_SECRET_TIMEOUT_SECONDS = env.LLM_SECRET_TIMEOUT_SECONDS
+LLM_VAULT_URL = env.LLM_VAULT_URL
+LLM_VAULT_MOUNT = env.LLM_VAULT_MOUNT
+LLM_VAULT_NAMESPACE = env.LLM_VAULT_NAMESPACE
+LLM_VAULT_TOKEN = env.LLM_VAULT_TOKEN
+LLM_VAULT_TOKEN_FILE = env.LLM_VAULT_TOKEN_FILE
+LLM_AWS_REGION = env.LLM_AWS_REGION
+LLM_GCP_PROJECT = env.LLM_GCP_PROJECT
 OUTBOX_LEASE_SECONDS = env.OUTBOX_LEASE_SECONDS
 OUTBOX_MAX_ATTEMPTS = env.OUTBOX_MAX_ATTEMPTS
 LLM_TRANSPORT_MAX_RETRIES = env.LLM_TRANSPORT_MAX_RETRIES
@@ -170,6 +204,21 @@ LOGGING = {
     "disable_existing_loggers": False,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": env.LOG_LEVEL},
+    # Vendor debug/request logs can include secret payloads, auth headers or
+    # locators. Secret lifecycle events use our own bounded audit metadata.
+    "loggers": {
+        name: {"handlers": ["console"], "level": "WARNING", "propagate": False}
+        for name in (
+            "httpx",
+            "httpcore",
+            "boto3",
+            "botocore",
+            "google.auth",
+            "google.api_core",
+            "google.cloud.secretmanager_v1",
+            "google.cloud.secretmanager",
+        )
+    },
 }
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
