@@ -17,6 +17,7 @@ from src.runs.models import WorkflowRun
 from src.runtimes.access import validate_runtime_for_agent
 from src.runtimes.models import LLMRuntime
 from src.workflows.models import Workflow
+from src.workflows.output_schemas import OutputSchemaRegistry
 from src.workflows.schemas import WorkflowSpec
 
 
@@ -117,6 +118,12 @@ class WorkflowSerializer(serializers.ModelSerializer):
             spec = WorkflowSpec(**values)
         except PydanticValidationError as exc:
             raise schema_error(exc) from exc
+        try:
+            OutputSchemaRegistry.snapshot_for_nodes(spec.nodes)
+        except ValueError as exc:
+            raise serializers.ValidationError(
+                {"nodes": "A structured output schema is unavailable."}
+            ) from exc
         request = self.context["request"]
         owner_id = self.instance.owner_id if self.instance else request.user.pk
         duplicates = Workflow.objects.filter(

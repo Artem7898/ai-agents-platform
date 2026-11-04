@@ -232,7 +232,7 @@ async def test_runtime_structured_validation_error_does_not_echo_provider_data(t
 
     handlers[0] = handler
     spec = make_runtime()
-    with pytest.raises(LLMResponseError, match="invalid typed data") as error:
+    with pytest.raises(LLMResponseError, match="invalid structured result") as error:
         await LLMService().generate_structured(agent_for(spec), "Question", Result, runtime=spec)
     assert "test-cloud-key" not in str(error.value)
 

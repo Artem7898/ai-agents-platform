@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 import json
-import re
 import uuid
 from collections.abc import Awaitable, Callable, Collection
 from contextvars import ContextVar
@@ -11,14 +10,13 @@ from typing import Any, TypeAliasType, get_args, get_type_hints
 
 from opentelemetry import trace
 from pydantic import BaseModel, ConfigDict, ValidationError, create_model
-from pydantic_core.core_schema import ErrorType
 
 from .schemas import ToolCall, ToolSpec
 from .tool_context import ToolExecutionContext
+from .validation_feedback import safe_validation_issues
 
 _TOOL_NAMESPACE = uuid.UUID("9f2b24fe-fbe1-4ef9-8d8a-196eb378a659")
 _execution_key: ContextVar[str | None] = ContextVar("tool_execution_key", default=None)
-_VALIDATION_CODES = frozenset(get_args(ErrorType))
 _MAX_ARGUMENT_BYTES = 256_000
 
 
@@ -32,51 +30,6 @@ class ToolArgumentsValidationError(ValueError):
             + json.dumps(self.issues[:8], ensure_ascii=True, separators=(",", ":"))
         )[:2048]
         super().__init__("Tool arguments failed schema validation")
-
-
-def _schema_fields(schema: dict[str, Any]) -> set[str]:
-    names = set()
-
-    def visit(value):
-        if isinstance(value, dict):
-            properties = value.get("properties")
-            if isinstance(properties, dict):
-                names.update(properties)
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(schema)
-    return names
-
-
-def _safe_issues(error: ValidationError, schema: dict[str, Any]) -> list[dict[str, Any]]:
-    fields = _schema_fields(schema)
-    issues = []
-    for item in error.errors(include_url=False, include_context=False, include_input=False)[:64]:
-        code = item.get("type")
-        code = code if code in _VALIDATION_CODES else "invalid_value"
-        path = []
-        length = 0
-        for part in item.get("loc", ())[:8]:
-            if isinstance(part, str):
-                safe = (
-                    part
-                    if part in fields and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,31}", part)
-                    else "[field]"
-                )
-            elif type(part) is int and 0 <= part <= 999999:
-                safe = part
-            else:
-                safe = "[field]"
-            if length + len(str(safe)) + 1 > 128:
-                break
-            path.append(safe)
-            length += len(str(safe)) + 1
-        issues.append({"code": code, "path": path})
-    return issues
 
 
 def _contains_context(annotation: Any, seen: set[int] | None = None) -> bool:
@@ -226,7 +179,7 @@ class ToolRegistry:
             )
         except ValidationError as exc:
             raise ToolArgumentsValidationError(
-                _safe_issues(exc, cls._definitions[tool_name].parameters_schema)
+                safe_validation_issues(exc, cls._definitions[tool_name].parameters_schema)
             ) from None
 
     @classmethod

@@ -6,10 +6,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 import src.agents.llm_service as llm_module
-from src.agents.llm_service import LLMResponseError, LLMService, _map_tools_to_openai_spec
+from src.agents.llm_service import (
+    LLMResponseError,
+    LLMService,
+    StructuredOutputValidationError,
+    _map_tools_to_openai_spec,
+)
 from src.agents.schemas import AgentSpec, ChatMessage, MessageRole, ToolCall, ToolSpec
 
 
@@ -142,7 +147,7 @@ async def test_structured_output_uses_strict_schema_and_validates_return_value(a
 
 async def test_structured_output_rejects_invalid_model_data(agent, provider):
     provider.return_value = completion(content='{"score":150,"reason":"Outside range"}')
-    with pytest.raises(ValidationError):
+    with pytest.raises(StructuredOutputValidationError):
         await LLMService().generate_structured(agent, "Score it", Score)
 
 

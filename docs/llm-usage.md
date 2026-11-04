@@ -79,4 +79,4 @@ Admission selects the applicable rate version and freezes it for that invocation
 
 Apply Django migrations before starting web and worker processes. Use the same database and release for all workers; PostgreSQL row locks serialize quota admissions. Token and request policies are independent of a workflow's existing execution limits.
 
-This change adds accounting, admission quotas and optional price estimates. It does not provision hosted GGUF runtimes, add an external Secret Manager, implement model-output repair loops, collect subscription payments or provide provider-billing synchronization. Configure retention and export of invocation records separately before relying on them for long-term financial reporting.
+Accounting, admission quotas and optional price estimates also cover [tool-call repairs](schema-first-tools.md) and [structured workflow results](structured-results.md). Hosted GGUF provisioning, an external Secret Manager, subscription payments and provider-billing synchronization remain separate work. Configure retention and export of invocation records separately before relying on them for long-term financial reporting.

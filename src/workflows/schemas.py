@@ -6,6 +6,8 @@ from typing import Any, Literal, Self
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, StrictBool, model_validator
 
+from .output_schemas import OutputSchemaRef
+
 type WorkflowID = UUID4
 type AgentID = UUID4
 type ToolID = uuid.UUID
@@ -46,6 +48,7 @@ class ExecutionLimits(BaseModel):
     max_duration_seconds: float = Field(default=300, gt=0, le=3600)
     max_tool_calls: int = Field(default=32, ge=0, le=1000)
     max_tool_repairs: int = Field(default=2, ge=0, le=5, strict=True)
+    max_output_repairs: int = Field(default=2, ge=0, le=5, strict=True)
     max_tokens: int = Field(default=32000, ge=1, le=1000000)
     max_output_tokens: int = Field(default=1024, ge=1, le=32000)
     tool_timeout_seconds: float = Field(default=30, gt=0, le=300)
@@ -57,10 +60,13 @@ class WorkflowNodeSpec(BaseModel):
     kind: NodeKind
     agent_id: AgentID | None = None
     tool_id: ToolID | None = None
+    output_schema: OutputSchemaRef | None = None
     config: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
+        if self.output_schema is not None and self.kind != NodeKind.LLM_CALL:
+            raise ValueError("Only llm_call nodes can select an output schema")
         if self.kind == NodeKind.LLM_CALL and self.agent_id is None:
             raise ValueError("llm_call nodes require agent_id")
         if self.kind == NodeKind.TOOL_EXEC and self.tool_id is None:

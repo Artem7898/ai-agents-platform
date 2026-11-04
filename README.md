@@ -53,6 +53,7 @@ Both API versions require `Authorization: Token <key>`. Django sessions are used
 - `/api/v1/agents/`: agent CRUD.
 - `/api/v1/runtimes/`: staff-managed LLM runtime configuration; owners can read their runtimes.
 - `/api/v1/workflows/`: workflow CRUD.
+- `/api/v1/output-schemas/`: authenticated read-only catalog of structured result contracts.
 - `/api/v1/runs/`: run inspection; state changes use explicit commands.
 - `/api/v2/runs/execute`: queue execution.
 - `/api/v2/runs/{run_id}`: inspect status, input and output.
@@ -88,9 +89,11 @@ Use the generated development OpenAPI documentation at `/api/v2/docs` for exact 
 
 Definitions are validated before execution: node identifiers must be unique, edge endpoints must exist, and cycles are rejected. Nodes execute in dependency order; a shared successor executes once after its active predecessors. Node execution is currently sequential. Human approval checkpoints preserve the pending graph state and resume through the same durable command path.
 
-Conditions use structured values such as `{ "path": "decision", "op": "eq", "value": true }` rather than executable Python expressions. A workflow can select `output_node_id` and configure limits including `max_steps`, `max_duration_seconds`, `max_tool_calls`, `max_tool_repairs`, `max_tokens`, `max_output_tokens` and `tool_timeout_seconds`. See the schemas in `src/workflows/schemas.py` for defaults and validation rules. Agent `tool_ids` are an execution allowlist, not merely suggestions to the model.
+Conditions use structured values such as `{ "path": "decision", "op": "eq", "value": true }` rather than executable Python expressions. A workflow can select `output_node_id` and configure limits including `max_steps`, `max_duration_seconds`, `max_tool_calls`, `max_tool_repairs`, `max_output_repairs`, `max_tokens`, `max_output_tokens` and `tool_timeout_seconds`. See the schemas in `src/workflows/schemas.py` for defaults and validation rules. Agent `tool_ids` are an execution allowlist, not merely suggestions to the model.
 
 Tool batches are validated before execution. Invalid arguments can request a bounded model correction, with counters preserved across recovery and each attempt charged to the normal usage budget. [Schema-first tools](docs/schema-first-tools.md) covers `max_tool_repairs`, typed execution context and failure behavior.
+
+LLM nodes can select a versioned server output schema and return validated JSON objects to downstream nodes. [Structured workflow results](docs/structured-results.md) covers contract selection, frozen versions, `max_output_repairs` and deployment migrations.
 
 Runs preserve a snapshot of the workflow definition so editing a workflow does not change an existing run. Persisted events support inspection; they do not provide an API for undoing an external side effect or arbitrary time-travel rollback.
 

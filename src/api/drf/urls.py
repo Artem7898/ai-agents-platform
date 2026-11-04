@@ -11,6 +11,7 @@ from src.usage.api import (
     OwnerQuotaViewSet,
     QuotaWindowViewSet,
 )
+from src.workflows.output_api import OutputSchemaViewSet
 
 from .viewsets import AgentViewSet, WorkflowRunViewSet, WorkflowViewSet
 
@@ -24,5 +25,6 @@ router.register(r"llm-calls", LLMInvocationViewSet, basename="llm-call")
 router.register(r"llm-quotas", OwnerQuotaViewSet, basename="llm-quota")
 router.register(r"llm-quota-windows", QuotaWindowViewSet, basename="llm-quota-window")
 router.register(r"llm-rates", LLMRateViewSet, basename="llm-rate")
+router.register(r"output-schemas", OutputSchemaViewSet, basename="output-schema")
 
 urlpatterns = router.urls
