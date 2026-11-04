@@ -29,6 +29,7 @@ class WorkflowRun(models.Model):
     events = models.JSONField(default=list)
     workflow_snapshot = models.JSONField(default=dict)
     agent_snapshots = models.JSONField(default=dict)
+    runtime_snapshots = models.JSONField(default=dict)
     checkpoint = models.JSONField(default=dict)
     cancel_requested = models.BooleanField(default=False)
     execution_token = models.UUIDField(null=True, blank=True)

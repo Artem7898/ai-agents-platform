@@ -3,8 +3,10 @@ Infrastructure Layer: Django ORM модели для домена Agents.
 """
 
 import uuid
+from typing import TYPE_CHECKING
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from nova import NovaConfig, NovaModel  # Вернули импорт твоего фреймворка
 
@@ -17,6 +19,16 @@ class Agent(NovaModel):  # Вернули NovaModel
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    if TYPE_CHECKING:
+        runtime_id: uuid.UUID | None
+
+    runtime = models.ForeignKey(
+        "runtimes.LLMRuntime",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="agents",
+    )
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -58,8 +70,22 @@ class Agent(NovaModel):  # Вернули NovaModel
         cache_enabled=True,
         cache_ttl_seconds=300,
         strict_validation=True,
-        exclude_from_pydantic=("status", "created_at", "updated_at", "owner"),
+        exclude_from_pydantic=("status", "created_at", "updated_at", "owner", "runtime"),
     )
+
+    def clean(self):
+        super().clean()
+        if self.runtime_id is not None:
+            from src.runtimes.access import validate_runtime_for_agent
+            from src.runtimes.models import LLMRuntime
+
+            try:
+                runtime = LLMRuntime.objects.get(pk=self.runtime_id)
+                validate_runtime_for_agent(runtime, getattr(self, "owner_id"), self.to_spec())
+            except (LLMRuntime.DoesNotExist, ValueError) as exc:
+                raise ValidationError(
+                    {"runtime": "Runtime is unavailable for this agent."}
+                ) from exc
 
     def to_spec(self) -> AgentSpec:
         """Конвертирует ORM-объект в доменную Pydantic-модель."""
@@ -67,6 +93,7 @@ class Agent(NovaModel):  # Вернули NovaModel
             id=self.id,
             name=self.name,
             model_name=self.model_name,
+            runtime_id=self.runtime_id,
             system_prompt=self.system_prompt,
             tool_ids=self.tool_ids,
             temperature=self.temperature,
@@ -79,6 +106,7 @@ class Agent(NovaModel):  # Вернули NovaModel
             id=spec.id,
             name=spec.name,
             model_name=spec.model_name,
+            runtime_id=spec.runtime_id,
             system_prompt=spec.system_prompt,
             tool_ids=[str(tool_id) for tool_id in spec.tool_ids],
             temperature=spec.temperature,

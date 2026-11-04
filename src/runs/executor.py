@@ -387,6 +387,11 @@ class WorkflowExecutor:
                 raise WorkflowExecutionError("Run token budget exceeded")
             if state.get("rounds", 0) >= self.workflow.limits.max_tool_calls + 1:
                 raise WorkflowExecutionError("Run LLM-round budget exceeded")
+            runtime_kwargs: dict[str, Any] = {}
+            if agent_spec.runtime_id is not None:
+                from src.runtimes.access import get_run_runtime
+
+                runtime_kwargs["runtime"] = await get_run_runtime(self.run, agent_spec)
             response = await self.llm_service.generate_with_tools(
                 agent_spec=agent_spec,
                 prompt="",
@@ -395,6 +400,7 @@ class WorkflowExecutor:
                     ChatMessage.model_validate(message) for message in state["history"]
                 ],
                 max_output_tokens=min(self.workflow.limits.max_output_tokens, remaining_tokens),
+                **runtime_kwargs,
             )
             self.checkpoint.usage["total_tokens"] = (
                 self.checkpoint.usage.get("total_tokens", 0) + response.usage.total_tokens

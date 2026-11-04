@@ -4,7 +4,7 @@ A Django 5.2 LTS backend for persisted AI workflows, with Django REST Framework 
 
 The project provides a foundation for authenticated workflow execution, graph validation, checkpoints and recovery. External tool effects need their own idempotency guarantees: retrying a message cannot guarantee exactly-once effects in another system. Latency, throughput and availability depend on the deployment and must be measured there.
 
-[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md)
+[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md)
 
 ## Local setup
 
@@ -51,6 +51,7 @@ Compose binds PostgreSQL and HTTP to loopback and uses development-only database
 Both API versions require `Authorization: Token <key>`. Django sessions are used for `/admin/`; logging into the admin does not replace the API token. Ordinary users see their owned agents and workflows. Staff can manage shared/legacy records. Treat tokens as passwords and use HTTPS outside localhost.
 
 - `/api/v1/agents/`: agent CRUD.
+- `/api/v1/runtimes/`: staff-managed LLM runtime configuration; owners can read their runtimes.
 - `/api/v1/workflows/`: workflow CRUD.
 - `/api/v1/runs/`: run inspection; state changes use explicit commands.
 - `/api/v2/runs/execute`: queue execution.
@@ -90,6 +91,10 @@ Definitions are validated before execution: node identifiers must be unique, edg
 Conditions use structured values such as `{ "path": "decision", "op": "eq", "value": true }` rather than executable Python expressions. A workflow can select `output_node_id` and configure limits including `max_steps`, `max_duration_seconds`, `max_tool_calls`, `max_tokens`, `max_output_tokens` and `tool_timeout_seconds`. See the schemas in `src/workflows/schemas.py` for defaults and validation rules. Agent `tool_ids` are an execution allowlist, not merely suggestions to the model.
 
 Runs preserve a snapshot of the workflow definition so editing a workflow does not change an existing run. Persisted events support inspection; they do not provide an API for undoing an external side effect or arbitrary time-travel rollback.
+
+## LLM runtimes
+
+An agent can select a managed runtime through `runtime_id`: OpenAI, Ollama, or an OpenAI-compatible endpoint. Runtime profiles declare supported request features and allowed models; endpoint URLs and credential aliases are controlled by the server operator. Agents without a runtime keep the global `OPENAI_API_KEY` / `OPENAI_BASE_URL` configuration. See [LLM runtimes](docs/llm-runtimes.md) for setup, access controls, run snapshots, compatibility testing and follow-up work.
 
 ## Checks
 

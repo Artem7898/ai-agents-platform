@@ -96,6 +96,7 @@ class AgentSpec(BaseModel):
     id: AgentID = Field(default_factory=uuid.uuid4)
     name: str = Field(min_length=1, max_length=128)
     model_name: str = Field(min_length=1, max_length=128)
+    runtime_id: UUID4 | None = None
     system_prompt: str
     tool_ids: list[ToolID] = Field(default_factory=list)
     temperature: float = Field(0.7, ge=0.0, le=2.0, allow_inf_nan=False)
