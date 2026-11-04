@@ -38,6 +38,9 @@ class EnvSettings(BaseSettings):
     LLM_RUNTIME_SECRETS: dict[str, SecretStr] = {}
     OUTBOX_LEASE_SECONDS: float = Field(default=600, ge=3, le=86400)
     OUTBOX_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=100)
+    LLM_TRANSPORT_MAX_RETRIES: int = Field(default=2, ge=0, le=2)
+    LLM_RETRY_BASE_SECONDS: float = Field(default=0.25, ge=0, le=10)
+    LLM_RESERVATION_OVERHEAD_TOKENS: int = Field(default=512, ge=0, le=8192)
 
 
 env = EnvSettings()
@@ -49,6 +52,9 @@ LLM_ALLOWED_BASE_URLS = env.LLM_ALLOWED_BASE_URLS
 LLM_RUNTIME_SECRETS = env.LLM_RUNTIME_SECRETS
 OUTBOX_LEASE_SECONDS = env.OUTBOX_LEASE_SECONDS
 OUTBOX_MAX_ATTEMPTS = env.OUTBOX_MAX_ATTEMPTS
+LLM_TRANSPORT_MAX_RETRIES = env.LLM_TRANSPORT_MAX_RETRIES
+LLM_RETRY_BASE_SECONDS = env.LLM_RETRY_BASE_SECONDS
+LLM_RESERVATION_OVERHEAD_TOKENS = env.LLM_RESERVATION_OVERHEAD_TOKENS
 DEBUG = False
 ALLOWED_HOSTS = env.ALLOWED_HOSTS
 INSTALLED_APPS = [
@@ -67,6 +73,7 @@ INSTALLED_APPS = [
     "src.core",
     "src.agents",
     "src.runtimes",
+    "src.usage",
     "src.workflows",
     "src.runs",
 ]

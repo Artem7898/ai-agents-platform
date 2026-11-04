@@ -3,6 +3,7 @@
 import uuid
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -12,10 +13,18 @@ from .schemas import OutboxStatus, RunStatus, WorkflowRunSpec
 class WorkflowRun(models.Model):
     if TYPE_CHECKING:
         workflow_id: uuid.UUID
+        billing_owner_id: int | None
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workflow = models.ForeignKey(
         "workflows.Workflow", on_delete=models.PROTECT, related_name="runs"
+    )
+    billing_owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="llm_workflow_runs",
     )
     status = models.CharField(
         max_length=32,

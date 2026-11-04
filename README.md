@@ -96,6 +96,10 @@ Runs preserve a snapshot of the workflow definition so editing a workflow does n
 
 An agent can select a managed runtime through `runtime_id`: OpenAI, Ollama, or an OpenAI-compatible endpoint. Runtime profiles declare supported request features and allowed models; endpoint URLs and credential aliases are controlled by the server operator. Agents without a runtime keep the global `OPENAI_API_KEY` / `OPENAI_BASE_URL` configuration. See [LLM runtimes](docs/llm-runtimes.md) for setup, access controls, run snapshots, compatibility testing and follow-up work.
 
+## LLM usage and quotas
+
+Workflow calls now have an owner-scoped invocation ledger, concurrency-safe request/token quotas, and optional versioned cost estimates. Staff manages quota policies; unknown provider usage stays unresolved until reconciliation. See [LLM usage and quotas](docs/llm-usage.md) for API access, reservation semantics and operational limits.
+
 ## Checks
 
 Use a PostgreSQL test database and a role allowed to create the test database:
