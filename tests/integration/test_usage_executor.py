@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 
 import src.agents.llm_service as llm_module
 from src.agents.models import Agent
+from src.agents.tool_registry import ToolRegistry
 from src.runs.executor import WorkflowExecutor
 from src.runs.models import WorkflowRun
 from src.runs.schemas import RunCheckpoint
@@ -46,7 +47,7 @@ def completion(*, usage=True, invalid=False):
                 {
                     "id": "bad-call",
                     "type": "function",
-                    "function": {"name": "echo", "arguments": "not-json"},
+                    "function": {"name": "search_knowledge_base", "arguments": "not-json"},
                 }
             ],
         }
@@ -55,7 +56,7 @@ def completion(*, usage=True, invalid=False):
 
 @pytest_asyncio.fixture
 async def run_factory(async_db):
-    async def create(*, max_tokens=32000, checkpoint=None):
+    async def create(*, max_tokens=32000, checkpoint=None, max_tool_repairs=2, tool_ids=None):
         owner = await get_user_model().objects.acreate(username=f"engine-{uuid.uuid4()}")
         agent = await Agent.objects.acreate(
             owner=owner,
@@ -63,14 +64,18 @@ async def run_factory(async_db):
             model_name="model",
             status="active",
             system_prompt="Answer briefly",
-            tool_ids=[],
+            tool_ids=tool_ids or [],
         )
         workflow = await Workflow.objects.acreate(
             owner=owner,
             name=f"workflow-{uuid.uuid4()}",
             nodes=[{"id": "ask", "kind": "llm_call", "agent_id": str(agent.pk)}],
             edges=[],
-            limits={"max_tokens": max_tokens, "max_output_tokens": 10},
+            limits={
+                "max_tokens": max_tokens,
+                "max_output_tokens": 10,
+                "max_tool_repairs": max_tool_repairs,
+            },
         )
         run = await create_run(workflow.pk, {"prompt": "Hello"}, owner)
         if checkpoint is not None:
@@ -131,7 +136,8 @@ async def test_real_workflow_records_frozen_owner_and_reported_usage(run_factory
 
 
 async def test_invalid_tool_arguments_still_persist_usage_in_failed_run(run_factory, provider):
-    _, run = await run_factory()
+    search = next(spec for spec in ToolRegistry.get_specs() if spec.name == "search_knowledge_base")
+    _, run = await run_factory(max_tool_repairs=0, tool_ids=[str(search.id)])
     provider[0].append(completion(invalid=True))
     await WorkflowExecutor(run.pk).execute()
     await run.arefresh_from_db()
@@ -139,7 +145,7 @@ async def test_invalid_tool_arguments_still_persist_usage_in_failed_run(run_fact
     assert call.total_tokens == 10
     assert call.status == "succeeded"
     assert run.status == "failed"
-    assert "invalid tool arguments" in run.checkpoint["error"]
+    assert "repair budget exhausted" in run.checkpoint["error"]
     assert run.checkpoint["usage"]["budget_tokens"] == 10
     assert run.checkpoint["usage"]["total_tokens"] == 10
 

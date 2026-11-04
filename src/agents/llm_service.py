@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing, asynccontextmanager, contextmanager
 from typing import Any, TypeVar, cast
@@ -11,7 +12,7 @@ import httpx
 from openai import AsyncOpenAI, OpenAIError
 from openai.types.chat import ChatCompletionToolUnionParam
 from opentelemetry import trace
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from src.runtimes.clients import close_runtime_clients, runtime_client
 from src.runtimes.schemas import RuntimeSpec
@@ -33,6 +34,12 @@ from .schemas import (
 
 T = TypeVar("T", bound=BaseModel)
 _llm_client: AsyncOpenAI | None = None
+_tool_arguments = TypeAdapter(dict[str, Any])
+_MAX_TOOL_CALLS = 128
+_MAX_TOOL_ARGUMENT_BYTES = 256_000
+_MAX_RESPONSE_ARGUMENT_BYTES = 1_000_000
+_CALL_ID = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
+_TOOL_NAME = re.compile(r"^[a-z0-9_]{1,128}$")
 
 
 class LLMResponseError(ValueError):
@@ -44,6 +51,24 @@ class TokenUsage(BaseModel):
     prompt_tokens: int | None = Field(default=None, ge=0)
     completion_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
+
+
+class ToolResponseValidationError(LLMResponseError):
+    """A repairable argument failure, without the rejected provider content."""
+
+    code = "invalid_tool_arguments"
+
+    def __init__(
+        self,
+        *,
+        usage: TokenUsage,
+        accounted_tokens: int | None,
+        unknown_calls: int,
+    ):
+        super().__init__("Provider returned invalid tool arguments")
+        self.usage = usage
+        self.accounted_tokens = accounted_tokens
+        self.unknown_calls = unknown_calls
 
 
 class LLMResponse(BaseModel):
@@ -292,11 +317,73 @@ def _completion_message(response: Any) -> Any:
     message = choice.message
     if getattr(message, "refusal", None):
         raise LLMResponseError("Provider refused the request")
+    if message.content is not None and not isinstance(message.content, str):
+        raise LLMResponseError("Provider returned invalid completion content")
     return message
 
 
 def _usage(response: Any) -> TokenUsage:
     return TokenUsage(**(normalized_usage(response) or {}))
+
+
+def _tool_calls(
+    message: Any,
+    *,
+    allowed_names: set[str] | None,
+    usage: TokenUsage,
+    accounted_tokens: int | None,
+    unknown_calls: int,
+) -> list[ToolCall]:
+    raw_calls = [] if message.tool_calls is None else message.tool_calls
+    if not isinstance(raw_calls, list):
+        raise LLMResponseError("Provider returned an invalid tool call list")
+    if len(raw_calls) > _MAX_TOOL_CALLS:
+        raise LLMResponseError("Provider returned too many tool calls")
+    seen: set[str] = set()
+    total_bytes = 0
+    # Check the entire envelope first. A malformed argument cannot make a
+    # forbidden metadata shape look repairable or hide a duplicate call ID.
+    for call in raw_calls:
+        call_id = getattr(call, "id", None)
+        function = getattr(call, "function", None)
+        name = getattr(function, "name", None)
+        if (
+            getattr(call, "type", None) != "function"
+            or not isinstance(call_id, str)
+            or _CALL_ID.fullmatch(call_id) is None
+            or not isinstance(name, str)
+            or _TOOL_NAME.fullmatch(name) is None
+        ):
+            raise LLMResponseError("Provider returned invalid tool call metadata")
+        if call_id in seen:
+            raise LLMResponseError("Provider returned duplicate tool call identifiers")
+        if allowed_names is not None and name not in allowed_names:
+            raise LLMResponseError("Provider requested a tool that is not allowed")
+        seen.add(call_id)
+        raw = getattr(function, "arguments", None)
+        if isinstance(raw, str):
+            try:
+                size = len(raw.encode("utf-8"))
+            except UnicodeEncodeError:
+                raise LLMResponseError("Provider returned invalid tool call encoding") from None
+            total_bytes += size
+            if size > _MAX_TOOL_ARGUMENT_BYTES or total_bytes > _MAX_RESPONSE_ARGUMENT_BYTES:
+                raise LLMResponseError("Provider tool arguments exceed the response size limit")
+    calls = []
+    for call in raw_calls:
+        try:
+            arguments = _tool_arguments.validate_json(call.function.arguments, strict=True)
+            # The JSON decoder can represent non-finite numbers inside Any.
+            # Reject them before they can enter checkpoints or tool adapters.
+            json.dumps(arguments, allow_nan=False)
+        except (ValidationError, TypeError, ValueError, RecursionError):
+            raise ToolResponseValidationError(
+                usage=usage,
+                accounted_tokens=accounted_tokens,
+                unknown_calls=unknown_calls,
+            ) from None
+        calls.append(ToolCall(id=call.id, name=call.function.name, arguments=arguments))
+    return calls
 
 
 async def _create_completion(
@@ -353,23 +440,20 @@ class LLMService:
                     client, parameters, runtime, invocation_context, max_output_tokens, "tools"
                 )
                 message = _completion_message(response)
-                calls = []
-                for call in message.tool_calls or []:
-                    try:
-                        arguments = json.loads(call.function.arguments)
-                        # JSON's wire format cannot carry NaN or infinite numbers.
-                        json.dumps(arguments, allow_nan=False)
-                    except (json.JSONDecodeError, TypeError, ValueError):
-                        raise LLMResponseError("Provider returned invalid tool arguments") from None
-                    if not isinstance(arguments, dict):
-                        raise LLMResponseError("Tool arguments must be a JSON object")
-                    calls.append(ToolCall(id=call.id, name=call.function.name, arguments=arguments))
+                usage = _usage(response)
+                calls = _tool_calls(
+                    message,
+                    allowed_names={tool.name for tool in tools} if tools is not None else None,
+                    usage=usage,
+                    accounted_tokens=accounted,
+                    unknown_calls=unknown,
+                )
                 if message.content is None and not calls:
                     raise LLMResponseError("Provider returned an empty completion")
                 return LLMResponse(
                     content=message.content,
                     tool_calls=calls,
-                    usage=_usage(response),
+                    usage=usage,
                     accounted_tokens=accounted,
                     unknown_calls=unknown,
                 )

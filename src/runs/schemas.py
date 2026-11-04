@@ -29,6 +29,7 @@ class EventType(StrEnum):
     HITL_WAITING = "hitl_waiting"
     HITL_RESUMED = "hitl_resumed"
     TOOL_CALL = "tool_call"
+    TOOL_VALIDATION_FAILED = "tool_validation_failed"
     USAGE = "usage"
 
 
