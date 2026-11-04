@@ -34,6 +34,8 @@ class EnvSettings(BaseSettings):
     KNOWLEDGE_BASE_SEARCH_URL: str = ""
     OPENAI_API_KEY: SecretStr | None = None
     OPENAI_BASE_URL: str | None = None
+    LLM_ALLOWED_BASE_URLS: list[str] = ["https://api.openai.com/v1"]
+    LLM_RUNTIME_SECRETS: dict[str, SecretStr] = {}
     OUTBOX_LEASE_SECONDS: float = Field(default=600, ge=3, le=86400)
     OUTBOX_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=100)
 
@@ -43,6 +45,8 @@ SECRET_KEY = env.SECRET_KEY
 KNOWLEDGE_BASE_SEARCH_URL = env.KNOWLEDGE_BASE_SEARCH_URL
 OPENAI_API_KEY = env.OPENAI_API_KEY.get_secret_value() if env.OPENAI_API_KEY else None
 OPENAI_BASE_URL = env.OPENAI_BASE_URL
+LLM_ALLOWED_BASE_URLS = env.LLM_ALLOWED_BASE_URLS
+LLM_RUNTIME_SECRETS = env.LLM_RUNTIME_SECRETS
 OUTBOX_LEASE_SECONDS = env.OUTBOX_LEASE_SECONDS
 OUTBOX_MAX_ATTEMPTS = env.OUTBOX_MAX_ATTEMPTS
 DEBUG = False
@@ -62,6 +66,7 @@ INSTALLED_APPS = [
     "nova",
     "src.core",
     "src.agents",
+    "src.runtimes",
     "src.workflows",
     "src.runs",
 ]

@@ -13,6 +13,7 @@ from django.db.models import Max
 from src.agents.models import Agent
 from src.agents.schemas import AgentStatus
 from src.agents.tool_registry import ToolRegistry
+from src.runtimes.access import snapshot_run_runtimes
 from src.workflows.models import Workflow
 from src.workflows.schemas import NodeKind, WorkflowSpec
 
@@ -127,6 +128,7 @@ def create_run(
                 return _existing_create(existing, workflow_id, input_data, user)
         spec = workflow.to_spec()
         snapshots = _agent_snapshots(spec, workflow)
+        runtimes = snapshot_run_runtimes(snapshots, getattr(workflow, "owner_id"))
         try:
             # A savepoint lets a concurrent unique-key conflict be resolved without
             # leaving a half-created run or poisoning the outer transaction.
@@ -136,6 +138,7 @@ def create_run(
                     input_data=input_data,
                     workflow_snapshot=spec.model_dump(mode="json"),
                     agent_snapshots=snapshots,
+                    runtime_snapshots=runtimes,
                     checkpoint={},
                     status=RunStatus.PENDING.value,
                 )

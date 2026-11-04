@@ -25,7 +25,7 @@ class AgentAdmin(NovaBaseAdmin):
     readonly_fields = ("id", "created_at", "updated_at", "short_id")
 
     fieldsets = (
-        ("Основная информация", {"fields": ("id", "name", "status")}),
+        ("Основная информация", {"fields": ("id", "name", "status", "runtime")}),
         (
             "LLM Конфигурация",
             {

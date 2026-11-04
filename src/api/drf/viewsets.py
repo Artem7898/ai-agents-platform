@@ -2,7 +2,9 @@
 
 import uuid
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models.deletion import ProtectedError
+from nova.core.exceptions import NovaValidationError
 from pydantic import ValidationError as PydanticValidationError
 from rest_framework import serializers, viewsets
 from rest_framework.authentication import TokenAuthentication
@@ -12,6 +14,8 @@ from rest_framework.permissions import IsAuthenticated
 from src.agents.models import Agent
 from src.agents.schemas import AgentSpec
 from src.runs.models import WorkflowRun
+from src.runtimes.access import validate_runtime_for_agent
+from src.runtimes.models import LLMRuntime
 from src.workflows.models import Workflow
 from src.workflows.schemas import WorkflowSpec
 
@@ -21,6 +25,18 @@ def schema_error(exc):
 
 
 class AgentSerializer(serializers.ModelSerializer):
+    runtime_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def save(self, **kwargs):
+        try:
+            return super().save(**kwargs)
+        except (DjangoValidationError, NovaValidationError) as exc:
+            # Assignment can be revoked between serializer validation and the
+            # model's final validation. Do not expose backend validation details.
+            raise serializers.ValidationError(
+                {"runtime_id": "Agent configuration changed or its runtime is unavailable."}
+            ) from exc
+
     class Meta:
         model = Agent
         fields = (
@@ -28,6 +44,7 @@ class AgentSerializer(serializers.ModelSerializer):
             "owner",
             "name",
             "model_name",
+            "runtime_id",
             "system_prompt",
             "tool_ids",
             "temperature",
@@ -43,6 +60,7 @@ class AgentSerializer(serializers.ModelSerializer):
             for field, default in (
                 ("name", ""),
                 ("model_name", ""),
+                ("runtime_id", None),
                 ("system_prompt", ""),
                 ("tool_ids", []),
                 ("temperature", 0.7),
@@ -52,6 +70,15 @@ class AgentSerializer(serializers.ModelSerializer):
             spec = AgentSpec(**values)
         except PydanticValidationError as exc:
             raise schema_error(exc) from exc
+        if spec.runtime_id is not None:
+            owner_id = self.instance.owner_id if self.instance else self.context["request"].user.pk
+            try:
+                runtime = LLMRuntime.objects.get(pk=spec.runtime_id)
+                validate_runtime_for_agent(runtime, owner_id, spec)
+            except (LLMRuntime.DoesNotExist, ValueError) as exc:
+                raise serializers.ValidationError(
+                    {"runtime_id": "Runtime is unavailable for this agent."}
+                ) from exc
         if "tool_ids" in attrs:
             attrs["tool_ids"] = spec.model_dump(mode="json")["tool_ids"]
         return attrs

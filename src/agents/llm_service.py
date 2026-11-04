@@ -3,15 +3,18 @@
 import copy
 import json
 from collections.abc import AsyncIterator, Sequence
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, TypeVar, cast
 
 import httpx
-from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolUnionParam
-from openai.types.chat.completion_create_params import CompletionCreateParamsNonStreaming
+from openai import AsyncOpenAI, OpenAIError
+from openai.types.chat import ChatCompletionToolUnionParam
 from opentelemetry import trace
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from src.runtimes.clients import close_runtime_clients, runtime_client
+from src.runtimes.schemas import RuntimeSpec
+from src.runtimes.secrets import RuntimeConfigurationError
 
 from .schemas import (
     AgentSpec,
@@ -77,9 +80,62 @@ def get_llm_client() -> AsyncOpenAI:
 async def close_llm_client() -> None:
     """Called by ASGI lifespan and worker shutdown on their owning event loop."""
     global _llm_client
-    if _llm_client is not None:
-        client, _llm_client = _llm_client, None
-        await client.close()
+    try:
+        if _llm_client is not None:
+            client, _llm_client = _llm_client, None
+            await client.close()
+    finally:
+        await close_runtime_clients()
+
+
+def _validate_runtime(agent: AgentSpec, runtime: RuntimeSpec | None) -> None:
+    if runtime is None:
+        if agent.runtime_id is not None:
+            raise RuntimeConfigurationError("Agent requires its assigned runtime")
+        return
+    if agent.runtime_id is None or str(agent.runtime_id) != str(runtime.id):
+        raise RuntimeConfigurationError("Agent runtime does not match its assigned runtime")
+    if not runtime.enabled:
+        raise RuntimeConfigurationError("Runtime is disabled")
+    if agent.model_name not in runtime.allowed_models:
+        raise RuntimeConfigurationError("Model is not allowed by the assigned runtime")
+
+
+@asynccontextmanager
+async def _provider_client(agent: AgentSpec, runtime: RuntimeSpec | None):
+    _validate_runtime(agent, runtime)
+    if runtime is None:
+        yield get_llm_client()
+        return
+    try:
+        async with runtime_client(runtime) as client:
+            yield client
+    except OpenAIError as exc:
+        # Vendor bodies/headers may echo credentials. Persist only a safe status.
+        status = getattr(exc, "status_code", None)
+        suffix = f" (HTTP {status})" if type(status) is int else ""
+        raise LLMResponseError(f"Runtime provider request failed{suffix}") from None
+    except ValidationError:
+        raise LLMResponseError("Runtime provider returned invalid typed data") from None
+
+
+def _completion_parameters(
+    agent: AgentSpec, runtime: RuntimeSpec | None, max_output_tokens: int
+) -> dict[str, Any]:
+    _validate_runtime(agent, runtime)
+    parameters: dict[str, Any] = {"model": agent.model_name}
+    token_parameter = (
+        runtime.capabilities.token_limit_parameter if runtime else "max_completion_tokens"
+    )
+    parameters[token_parameter] = max_output_tokens
+    if runtime is None or runtime.capabilities.temperature:
+        parameters["temperature"] = agent.temperature
+    return parameters
+
+
+def _require_capability(runtime: RuntimeSpec | None, name: str) -> None:
+    if runtime is not None and not getattr(runtime.capabilities, name):
+        raise RuntimeConfigurationError(f"Runtime does not support {name}")
 
 
 @contextmanager
@@ -127,19 +183,29 @@ def _strict_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _map_tools_to_openai_spec(tools: Sequence[ToolSpec]) -> list[ChatCompletionToolUnionParam]:
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": _strict_json_schema(tool.parameters_schema),
-                "strict": True,
-            },
+def _map_tools_to_openai_spec(
+    tools: Sequence[ToolSpec], *, strict: bool = True
+) -> list[ChatCompletionToolUnionParam]:
+    mapped = []
+    for tool in tools:
+        function: dict[str, Any] = {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": (
+                _strict_json_schema(tool.parameters_schema)
+                if strict
+                else copy.deepcopy(tool.parameters_schema)
+            ),
         }
-        for tool in tools
-    ]
+        if strict:
+            function["strict"] = True
+        mapped.append(
+            {
+                "type": "function",
+                "function": function,
+            }
+        )
+    return cast(list[ChatCompletionToolUnionParam], mapped)
 
 
 def _map_history_to_openai_messages(
@@ -217,7 +283,7 @@ def _completion_message(response: Any) -> Any:
         raise LLMResponseError("Provider returned no completion choices")
     choice = response.choices[0]
     if choice.finish_reason not in ("stop", "tool_calls"):
-        raise LLMResponseError(f"Completion did not finish: {choice.finish_reason}")
+        raise LLMResponseError("Provider completion did not finish successfully")
     message = choice.message
     if getattr(message, "refusal", None):
         raise LLMResponseError("Provider refused the request")
@@ -244,34 +310,40 @@ class LLMService:
         context_history: list[ChatMessage | ContentBlock] | None = None,
         *,
         max_output_tokens: int = 1024,
+        runtime: RuntimeSpec | None = None,
     ) -> LLMResponse:
         _check_output_limit(max_output_tokens)
         messages = _build_messages(agent_spec, prompt, context_history)
-        parameters: CompletionCreateParamsNonStreaming = {
-            "model": agent_spec.model_name,
-            "messages": cast(list[ChatCompletionMessageParam], messages),
-            "temperature": agent_spec.temperature,
-            "max_completion_tokens": max_output_tokens,
-        }
+        parameters = _completion_parameters(agent_spec, runtime, max_output_tokens)
+        parameters["messages"] = messages
+        if tools or any(
+            message.get("tool_calls") or message["role"] == "tool" for message in messages
+        ):
+            _require_capability(runtime, "tools")
         if tools:
-            parameters["tools"] = _map_tools_to_openai_spec(tools)
+            parameters["tools"] = _map_tools_to_openai_spec(
+                tools, strict=runtime is None or runtime.capabilities.strict_tools
+            )
         with safe_nova_span("llm.generate_with_tools", model=agent_spec.model_name):
-            response = await get_llm_client().chat.completions.create(**parameters)
-            message = _completion_message(response)
-            calls = []
-            for call in message.tool_calls or []:
-                try:
-                    arguments = json.loads(call.function.arguments)
-                    # JSON's wire format cannot carry NaN or infinite numbers.
-                    json.dumps(arguments, allow_nan=False)
-                except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                    raise LLMResponseError("Provider returned invalid tool arguments") from exc
-                if not isinstance(arguments, dict):
-                    raise LLMResponseError("Tool arguments must be a JSON object")
-                calls.append(ToolCall(id=call.id, name=call.function.name, arguments=arguments))
-            if message.content is None and not calls:
-                raise LLMResponseError("Provider returned an empty completion")
-            return LLMResponse(content=message.content, tool_calls=calls, usage=_usage(response))
+            async with _provider_client(agent_spec, runtime) as client:
+                response = await client.chat.completions.create(**parameters)
+                message = _completion_message(response)
+                calls = []
+                for call in message.tool_calls or []:
+                    try:
+                        arguments = json.loads(call.function.arguments)
+                        # JSON's wire format cannot carry NaN or infinite numbers.
+                        json.dumps(arguments, allow_nan=False)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        raise LLMResponseError("Provider returned invalid tool arguments") from None
+                    if not isinstance(arguments, dict):
+                        raise LLMResponseError("Tool arguments must be a JSON object")
+                    calls.append(ToolCall(id=call.id, name=call.function.name, arguments=arguments))
+                if message.content is None and not calls:
+                    raise LLMResponseError("Provider returned an empty completion")
+                return LLMResponse(
+                    content=message.content, tool_calls=calls, usage=_usage(response)
+                )
 
     async def generate_structured(
         self,
@@ -281,29 +353,29 @@ class LLMService:
         context_history: list[ChatMessage | ContentBlock] | None = None,
         *,
         max_output_tokens: int = 1024,
+        runtime: RuntimeSpec | None = None,
     ) -> T:
         _check_output_limit(max_output_tokens)
         messages = _build_messages(agent_spec, prompt, context_history)
+        parameters = _completion_parameters(agent_spec, runtime, max_output_tokens)
+        _require_capability(runtime, "structured_outputs")
+        parameters["messages"] = messages
         schema = _strict_json_schema(target_schema.model_json_schema())
+        parameters["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": target_schema.__name__,
+                "strict": True,
+                "schema": schema,
+            },
+        }
         with safe_nova_span("llm.generate_structured", model=agent_spec.model_name):
-            response = await get_llm_client().chat.completions.create(
-                model=agent_spec.model_name,
-                messages=cast(list[ChatCompletionMessageParam], messages),
-                temperature=agent_spec.temperature,
-                max_completion_tokens=max_output_tokens,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": target_schema.__name__,
-                        "strict": True,
-                        "schema": schema,
-                    },
-                },
-            )
-            content = _completion_message(response).content
-            if content is None:
-                raise LLMResponseError("Provider returned no structured content")
-            return target_schema.model_validate_json(content, strict=True)
+            async with _provider_client(agent_spec, runtime) as client:
+                response = await client.chat.completions.create(**parameters)
+                content = _completion_message(response).content
+                if content is None:
+                    raise LLMResponseError("Provider returned no structured content")
+                return target_schema.model_validate_json(content, strict=True)
 
     async def stream_raw(
         self,
@@ -312,25 +384,26 @@ class LLMService:
         context_history: list[ChatMessage | ContentBlock] | None = None,
         *,
         max_output_tokens: int = 1024,
+        runtime: RuntimeSpec | None = None,
     ) -> AsyncIterator[str]:
         _check_output_limit(max_output_tokens)
         messages = _build_messages(agent_spec, prompt, context_history)
+        parameters = _completion_parameters(agent_spec, runtime, max_output_tokens)
+        _require_capability(runtime, "streaming")
+        parameters.update(messages=messages, stream=True)
+        if runtime is not None and runtime.capabilities.usage:
+            parameters["stream_options"] = {"include_usage": True}
         with safe_nova_span("llm.stream_raw", model=agent_spec.model_name):
-            stream = await get_llm_client().chat.completions.create(
-                model=agent_spec.model_name,
-                messages=cast(list[ChatCompletionMessageParam], messages),
-                stream=True,
-                temperature=agent_spec.temperature,
-                max_completion_tokens=max_output_tokens,
-            )
-            try:
-                async for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    choice = chunk.choices[0]
-                    if choice.finish_reason in ("length", "content_filter"):
-                        raise LLMResponseError(f"Stream did not finish: {choice.finish_reason}")
-                    if choice.delta.content:
-                        yield choice.delta.content
-            finally:
-                await stream.close()
+            async with _provider_client(agent_spec, runtime) as client:
+                stream = await client.chat.completions.create(**parameters)
+                try:
+                    async for chunk in stream:
+                        if not chunk.choices:
+                            continue
+                        choice = chunk.choices[0]
+                        if choice.finish_reason in ("length", "content_filter"):
+                            raise LLMResponseError(f"Stream did not finish: {choice.finish_reason}")
+                        if choice.delta.content:
+                            yield choice.delta.content
+                finally:
+                    await stream.close()
