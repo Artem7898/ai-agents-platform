@@ -1,0 +1,156 @@
+# Portable, loopback-only pilot. No model download or cloud provisioning occurs.
+# Use an explicit project name: docker compose -p gguf-pilot --env-file .env ...
+name: gguf-pilot
+
+x-restricted: &restricted
+  user: "${GGUF_UID:-10001}:${GGUF_GID:-10001}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 256
+
+services:
+  prepare-volumes:
+    image: python:3.12.16-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
+    user: "0:0"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    restart: "no"
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      GGUF_UID: "${GGUF_UID:-10001}"
+      GGUF_GID: "${GGUF_GID:-10001}"
+    command: [python, /pilot/prepare_volumes.py]
+    volumes:
+      - ./prepare_volumes.py:/pilot/prepare_volumes.py:ro
+      - verification:/verification
+      - caddy_data:/data
+      - caddy_config:/config
+
+  verify-model:
+    <<: *restricted
+    image: python:3.12.16-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
+    network_mode: none
+    restart: "no"
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      GGUF_MODEL_ALIAS: "${GGUF_MODEL_ALIAS:?Set an immutable model alias}"
+      GGUF_CONTEXT_SIZE: "${GGUF_CONTEXT_SIZE:-4096}"
+    depends_on:
+      prepare-volumes:
+        condition: service_completed_successfully
+    command: [python, /pilot/preflight.py]
+    secrets: [gguf_api_keys]
+    volumes:
+      - type: bind
+        source: "${GGUF_MODEL_DIR:?Set the absolute directory containing model.gguf and manifest.json}"
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+      - ../../src/gguf/artifacts.py:/pilot/artifacts.py:ro
+      - ./preflight.py:/pilot/preflight.py:ro
+      - verification:/verification
+
+  llama:
+    <<: *restricted
+    image: ghcr.io/ggml-org/llama.cpp@sha256:1145e8de3111dc9358c6d8daffb755c4cf8a862d93391c26ba521b9a810bbe3e
+    restart: on-failure:3
+    init: true
+    depends_on:
+      verify-model:
+        condition: service_completed_successfully
+    networks: [inference]
+    environment:
+      HOME: /tmp
+      LLAMA_ARG_N_GPU_LAYERS: "0"
+      CUDA_CACHE_PATH: /tmp/cuda-cache
+      GGUF_MODEL_ALIAS: "${GGUF_MODEL_ALIAS:?Set an immutable model alias}"
+      GGUF_CONTEXT_SIZE: "${GGUF_CONTEXT_SIZE:-4096}"
+    entrypoint: [/bin/sh, /pilot/start-server.sh]
+    command:
+      - --model
+      - /models/model.gguf
+      - --alias
+      - "${GGUF_MODEL_ALIAS:?Set an immutable model alias}"
+      - --ctx-size
+      - "${GGUF_CONTEXT_SIZE:-4096}"
+      - --threads
+      - "${GGUF_THREADS:-4}"
+      - --parallel
+      - "1"
+      - --n-predict
+      - "${GGUF_MAX_OUTPUT_TOKENS:-1024}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --api-key-file
+      - /tmp/gguf-api-keys
+      - --jinja
+      - --no-agent
+      - --no-webui
+      - --no-webui-mcp-proxy
+      - --no-slots
+      - --no-context-shift
+    cpus: "${GGUF_CPU_LIMIT:-4}"
+    mem_limit: "${GGUF_MEMORY_LIMIT:-8g}"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    secrets: [gguf_api_keys]
+    volumes:
+      - type: bind
+        source: "${GGUF_MODEL_DIR:?Set the absolute model directory}"
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./start-server.sh:/pilot/start-server.sh:ro
+      - verification:/verification:ro
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --show-error, --max-time, "2", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      start_period: 300s
+      retries: 12
+
+  proxy:
+    <<: *restricted
+    image: caddy:2.11.8-alpine@sha256:3db3a09e418f86a8fce8de4bc0026fccd2b4cd925aef00cc7d843d9fdc75e442
+    restart: on-failure:3
+    init: true
+    depends_on:
+      llama:
+        condition: service_healthy
+    networks: [inference, ingress]
+    environment:
+      GGUF_HOSTNAME: "${GGUF_HOSTNAME:-localhost}"
+      NO_PROXY: "${NO_PROXY:-},llama,localhost,127.0.0.1"
+    ports:
+      - "${GGUF_BIND_ADDRESS:-127.0.0.1}:${GGUF_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    cpus: "0.5"
+    mem_limit: 256m
+
+secrets:
+  gguf_api_keys:
+    file: "${GGUF_API_KEY_FILE:?Set the absolute path to a private API-key file}"
+
+networks:
+  inference:
+    internal: true
+  ingress:
+
+volumes:
+  verification:
+  caddy_data:
+  caddy_config:

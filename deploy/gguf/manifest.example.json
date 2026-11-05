@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "model_alias": "qwen-pilot-v1",
+  "model_file": "model.gguf",
+  "sha256": "REPLACE_WITH_VERIFIED_FILE_SHA256",
+  "size_bytes": 0,
+  "source": {
+    "url": "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF",
+    "revision": "REPLACE_WITH_IMMUTABLE_SOURCE_COMMIT"
+  },
+  "license": {
+    "identifier": "Apache-2.0",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0"
+  },
+  "quantization": "Q4_K_M",
+  "context_size": 4096,
+  "chat_template": "embedded",
+  "languages": ["ru", "en"]
+}

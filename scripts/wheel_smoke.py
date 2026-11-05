@@ -48,6 +48,7 @@ def main() -> None:
                 "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', "
                 "'config.settings.test'); import django; django.setup(); "
                 "import config.asgi; import src.runs.executor; "
+                "import src.gguf.artifacts; import src.gguf.pilot; "
                 "print('wheel base import smoke passed')",
             ],
             cwd=root,

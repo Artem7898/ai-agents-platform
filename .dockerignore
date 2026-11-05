@@ -13,3 +13,10 @@ staticfiles
 media
 htmlcov
 .coverage
+# Never copy model weights, operator credentials or pilot reports into the app image.
+**/*.gguf
+deploy/gguf/models
+deploy/gguf/secrets
+deploy/gguf/.secrets
+deploy/gguf/keys
+deploy/gguf/reports

@@ -1,0 +1,16 @@
+# Local operator inputs, model artifacts and probe output.
+.env
+.env.*
+!.env.example
+operator.env
+*.gguf
+*.key
+*.pem
+*.crt
+ca*.conf
+models/
+secrets/
+.secrets/
+keys/
+reports/
+*.report.json

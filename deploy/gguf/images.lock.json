@@ -1,0 +1,20 @@
+{
+  "verified_on": "2026-11-05",
+  "llama_cpu": {
+    "image": "ghcr.io/ggml-org/llama.cpp@sha256:1145e8de3111dc9358c6d8daffb755c4cf8a862d93391c26ba521b9a810bbe3e",
+    "source_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+    "source_build": "b12110"
+  },
+  "llama_cuda": {
+    "image": "ghcr.io/ggml-org/llama.cpp@sha256:a2963b4817f03eea7e0d6065ea576252322792441ef97aaae178b924520547d6",
+    "source_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+    "source_build": "b12110"
+  },
+  "proxy": {
+    "image": "caddy:2.11.8-alpine@sha256:3db3a09e418f86a8fce8de4bc0026fccd2b4cd925aef00cc7d843d9fdc75e442",
+    "source_version": "2.11.8-alpine"
+  },
+  "verifier": {
+    "image": "python:3.12.16-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337"
+  }
+}

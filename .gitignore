@@ -21,3 +21,10 @@ media/
 site/
 .idea/
 .vscode/
+# GGUF pilot artifacts belong on an operator-managed volume, outside source control.
+*.gguf
+deploy/gguf/models/
+deploy/gguf/secrets/
+deploy/gguf/.secrets/
+deploy/gguf/keys/
+deploy/gguf/reports/

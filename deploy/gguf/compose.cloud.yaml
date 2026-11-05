@@ -1,0 +1,8 @@
+# Optional configuration only; applying this does not allocate a GPU or a VM.
+# Set public DNS GGUF_HOSTNAME, GGUF_BIND_ADDRESS=0.0.0.0 and GGUF_HTTPS_PORT=443.
+services:
+  proxy:
+    ports:
+      - "${GGUF_BIND_ADDRESS:-127.0.0.1}:80:8080"
+    volumes:
+      - ./Caddyfile.cloud:/etc/caddy/Caddyfile:ro

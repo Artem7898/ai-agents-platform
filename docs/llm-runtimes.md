@@ -233,14 +233,13 @@ criteria:
    Payment collection, subscription entitlements, calendar billing cycles
    and automated reconciliation with actual provider charges remain separate
    product work; usage-based cost estimates do not implement those features.
-3. **A concrete GGUF hosting pilot.** Choose one model and serving stack
-   that exposes the required OpenAI-compatible features. Verify model and
-   fine-tune licenses, available memory, context length, startup latency,
-   throughput and total cost for a measured workload. Confirm the hosting
-   service accepts the actual GGUF file and permits the intended use under
-   its subscription. Model upload, GPU provisioning, autoscaling and
-   deployment are separate work; selecting a runtime URL does not perform
-   them.
+3. **A measured GGUF deployment.** The [portable GGUF pilot](cloud-gguf.md)
+   provides a separate llama.cpp deployment configuration and bounded
+   verification/probe tooling. Choose a licensed model, hosting plan and
+   hardware, then measure memory, context, cold start, throughput, quality
+   and total cost with that exact artifact and chat template. Model upload,
+   GPU provisioning, autoscaling and cloud deployment remain
+   environment-specific work; selecting a runtime URL does not perform them.
 
 Do not infer that moving a workflow to a cloud endpoint makes it cheaper.
 Compare measured quality, latency and cost, including idle capacity, request
