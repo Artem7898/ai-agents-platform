@@ -25,8 +25,24 @@ jobs:
     env:
       DJANGO_SETTINGS_MODULE: config.settings.test
       DATABASE_URL: postgresql://agents:ci-only@127.0.0.1:5432/agents_test
+      CONSOLE_BROWSER_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run format:check
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.23"
@@ -40,3 +56,9 @@ jobs:
       - run: uv run --frozen --all-extras pytest
       - run: uv build --wheel
       - run: uv run --frozen --all-extras python scripts/wheel_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: console-browser-results
+          path: frontend/test-results/
+          retention-days: 7

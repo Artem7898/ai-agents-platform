@@ -50,6 +50,14 @@ def main() -> None:
                 "import config.asgi; import src.runs.executor; "
                 "import src.gguf.artifacts; import src.gguf.pilot; "
                 "import src.billing.services; import src.billing.api; "
+                "import src.console.ui; from pathlib import Path; "
+                "ui_root = Path(src.console.ui.__file__).parent / 'static' / 'console'; "
+                "assert (ui_root / 'index.html').is_file(), 'Build the console before packaging'; "
+                "assert list((ui_root / 'assets').glob('*.js')), 'Console scripts missing'; "
+                "assert list((ui_root / 'assets').glob('*.css')), 'Console styles missing'; "
+                "assert list((ui_root / 'assets').glob('*.woff2')), 'Console fonts missing'; "
+                "assert (ui_root / 'licenses' / 'Inter-OFL.txt').is_file(), 'Font license missing'; "
+                "print('wheel console assets smoke passed'); "
                 "print('wheel base import smoke passed')",
             ],
             cwd=root,

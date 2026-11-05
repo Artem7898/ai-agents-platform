@@ -5,6 +5,9 @@ from django.contrib import admin
 from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.urls import include, path
+from django.views.generic import RedirectView
+
+from src.console.ui import console
 
 
 def health_check(request):
@@ -29,8 +32,12 @@ async def readiness_check(request):
 
 
 urlpatterns = [
+    path("", RedirectView.as_view(url="/console/", permanent=False)),
     path("admin/", admin.site.urls),
     path("health/", health_check, name="health-check"),
     path("ready/", readiness_check, name="readiness-check"),
     path("api/v1/", include("src.api.drf.urls")),
+    path("console/api/", include("src.console.urls")),
+    path("console/", console, name="console"),
+    path("console/<path:path>", console, name="console-page"),
 ]

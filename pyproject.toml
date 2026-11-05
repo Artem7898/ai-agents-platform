@@ -57,8 +57,11 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = ["src", "config"]
 
+[tool.hatch.build]
+artifacts = ["src/console/static/console/**"]
+
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/config", "/tests", "/manage.py", "/README.md", "/README_RU.md", "/LICENSE", "/pyproject.toml", "/uv.lock"]
+include = ["/src", "/config", "/tests", "/frontend", "/manage.py", "/README.md", "/README_RU.md", "/LICENSE", "/pyproject.toml", "/uv.lock"]
 
 [tool.pyright]
 typeCheckingMode = "basic"

@@ -1,4 +1,14 @@
 # syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim AS console
+WORKDIR /console
+COPY frontend/package.json frontend/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
+    npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
 FROM python:3.12-slim-bookworm
 
@@ -22,6 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi; \
     uv sync --frozen --no-dev --no-install-project --extra aws --extra gcp
 COPY . .
+COPY --from=console /src/console/static/console /app/src/console/static/console
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then \
