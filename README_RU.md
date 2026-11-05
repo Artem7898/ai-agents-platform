@@ -4,17 +4,21 @@ Backend для сохраняемых AI workflow: Django 5.2 LTS, DRF для CR
 
 Это основа для выполнения графов с аутентификацией, checkpoint и восстановлением задач. Повторная доставка команды не гарантирует однократный внешний эффект: инструменты, которые меняют сторонние системы, должны поддерживать идемпотентность. Показатели задержки, пропускной способности и доступности необходимо измерять в конкретной среде.
 
-[English](README.md) · [Эксплуатация и восстановление](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md) · [GGUF-пилот](docs/cloud-gguf.md) · [Подписки и биллинг](docs/subscriptions-billing.md)
+[English](README.md) · [Пользовательский интерфейс](docs/console.md) · [Эксплуатация и восстановление](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md) · [GGUF-пилот](docs/cloud-gguf.md) · [Подписки и биллинг](docs/subscriptions-billing.md)
+
+[Консоль AgentOps](docs/console.md) по адресу `/console/` добавляет dashboard, управление агентами и workflow, просмотр запусков и биллинга. Вход выполняется по Django-сессии. Перед запуском интерфейса соберите frontend или используйте Docker-сборку приложения; существующие Token API сохраняют свои правила доступа.
 
 ## Локальный запуск
 
-Установите [uv](https://docs.astral.sh/uv/), Docker и Compose:
+Установите [uv](https://docs.astral.sh/uv/), Node.js 24, Docker и Compose:
 
 ```sh
 git clone https://github.com/Artem7898/ai-agents-platform.git
 cd ai-agents-platform
 cp .env.example .env
 uv sync --frozen --extra dev
+npm --prefix frontend ci
+npm --prefix frontend run build
 docker compose up -d postgres
 uv run --frozen python manage.py migrate
 uv run --frozen python manage.py createsuperuser
@@ -34,6 +38,8 @@ uv run --frozen python manage.py runworker
 ```
 
 Без worker команды остаются в очереди. Для проверки блокировок и восстановления с несколькими worker используйте PostgreSQL. SQLite подходит только для упрощённой локальной работы и тестов.
+
+Откройте `http://127.0.0.1:8000/console/` и войдите по имени пользователя и паролю Django. Созданный выше API-токен нужен для Token API; браузерная консоль его не запрашивает.
 
 Полный локальный запуск в контейнерах:
 
@@ -117,6 +123,11 @@ LLM-узел может выбрать версию серверной схем�
 
 ```sh
 uv sync --frozen --all-extras
+npm --prefix frontend ci
+npm --prefix frontend run typecheck
+npm --prefix frontend run format:check
+npm --prefix frontend test
+npm --prefix frontend run build
 DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen --all-extras pytest
 uv run --frozen python manage.py makemigrations --check --dry-run
 uv run --frozen ruff check .

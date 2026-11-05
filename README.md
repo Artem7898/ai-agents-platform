@@ -4,17 +4,21 @@ A Django 5.2 LTS backend for persisted AI workflows, with Django REST Framework 
 
 The project provides a foundation for authenticated workflow execution, graph validation, checkpoints and recovery. External tool effects need their own idempotency guarantees: retrying a message cannot guarantee exactly-once effects in another system. Latency, throughput and availability depend on the deployment and must be measured there.
 
-[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md) · [GGUF pilot](docs/cloud-gguf.md) · [Subscriptions and billing](docs/subscriptions-billing.md)
+[Русская инструкция](README_RU.md) · [Browser console](docs/console.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md) · [GGUF pilot](docs/cloud-gguf.md) · [Subscriptions and billing](docs/subscriptions-billing.md)
+
+The [AgentOps console](docs/console.md) at `/console/` adds a session-authenticated dashboard, agent/workflow management, run inspection and billing views. Build the frontend assets before serving the console, or use the application Docker build. The existing token APIs retain their authentication rules.
 
 ## Local setup
 
-Install [uv](https://docs.astral.sh/uv/) and Docker with Compose, then:
+Install [uv](https://docs.astral.sh/uv/), Node.js 24 and Docker with Compose, then:
 
 ```sh
 git clone https://github.com/Artem7898/ai-agents-platform.git
 cd ai-agents-platform
 cp .env.example .env
 uv sync --frozen --extra dev
+npm --prefix frontend ci
+npm --prefix frontend run build
 docker compose up -d postgres
 uv run --frozen python manage.py migrate
 uv run --frozen python manage.py createsuperuser
@@ -34,6 +38,8 @@ uv run --frozen python manage.py runworker
 ```
 
 A web process alone accepts commands but does not consume the queue. PostgreSQL is required for the multi-worker locking and recovery guarantees; SQLite is only a lightweight local/test option.
+
+Open `http://127.0.0.1:8000/console/` and sign in with the Django username and password. The API token created above is for the Token APIs and is not needed by the browser console.
 
 Alternatively, run the application and its database in containers:
 
@@ -117,6 +123,11 @@ Use a PostgreSQL test database and a role allowed to create the test database:
 
 ```sh
 uv sync --frozen --all-extras
+npm --prefix frontend ci
+npm --prefix frontend run typecheck
+npm --prefix frontend run format:check
+npm --prefix frontend test
+npm --prefix frontend run build
 DJANGO_SETTINGS_MODULE=config.settings.test uv run --frozen --all-extras pytest
 uv run --frozen python manage.py makemigrations --check --dry-run
 uv run --frozen ruff check .

@@ -28,3 +28,9 @@ deploy/gguf/secrets/
 deploy/gguf/.secrets/
 deploy/gguf/keys/
 deploy/gguf/reports/
+
+# The console bundle is built from frontend/ and packaged into releases.
+/src/console/static/console/
+/frontend/node_modules/
+/frontend/test-results/
+/frontend/playwright-report/

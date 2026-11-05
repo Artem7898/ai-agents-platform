@@ -113,6 +113,7 @@ INSTALLED_APPS = [
     "src.runtimes",
     "src.usage",
     "src.billing",
+    "src.console",
     "src.workflows",
     "src.runs",
 ]
