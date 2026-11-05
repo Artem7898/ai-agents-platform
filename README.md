@@ -4,7 +4,7 @@ A Django 5.2 LTS backend for persisted AI workflows, with Django REST Framework 
 
 The project provides a foundation for authenticated workflow execution, graph validation, checkpoints and recovery. External tool effects need their own idempotency guarantees: retrying a message cannot guarantee exactly-once effects in another system. Latency, throughput and availability depend on the deployment and must be measured there.
 
-[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md)
+[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md) · [GGUF pilot](docs/cloud-gguf.md)
 
 ## Local setup
 
@@ -102,6 +102,8 @@ Runs preserve a snapshot of the workflow definition so editing a workflow does n
 An agent can select a managed runtime through `runtime_id`: OpenAI, Ollama, or an OpenAI-compatible endpoint. Runtime profiles declare supported request features and allowed models; endpoint URLs and credential aliases are controlled by the server operator. Agents without a runtime keep the global `OPENAI_API_KEY` / `OPENAI_BASE_URL` configuration. See [LLM runtimes](docs/llm-runtimes.md) for setup, access controls, run snapshots, compatibility testing and follow-up work.
 
 Managed credential aliases can use Vault KV v2, AWS Secrets Manager and Google Secret Manager concurrently. [Secret Manager and rotation](docs/secret-manager.md) covers server bindings, SDK extras, access policies and TTL-bound key rotation without interrupting active client leases.
+
+[Portable GGUF pilot](docs/cloud-gguf.md) covers a separate llama.cpp server, artifact identity, private inference networking, TLS, capability probes and measured hosting costs. Cloud resources and model weights are supplied separately.
 
 ## LLM usage and quotas
 

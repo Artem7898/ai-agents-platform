@@ -1,0 +1,13 @@
+# Explicit opt-in. Requires NVIDIA Container Toolkit and sufficient GPU VRAM.
+services:
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:a2963b4817f03eea7e0d6065ea576252322792441ef97aaae178b924520547d6
+    environment:
+      LLAMA_ARG_N_GPU_LAYERS: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
