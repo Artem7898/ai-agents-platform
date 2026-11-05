@@ -226,13 +226,14 @@ criteria:
    lease-safe key rotation are implemented. Provision actual backend
    identities, scoped read policies, secrets, network access and log retention
    in the target environment, and exercise its rotation/revocation procedure.
-2. **Subscription billing and provider reconciliation, if required.**
-   [Call accounting and quotas](llm-usage.md),
-   [bounded tool repair](schema-first-tools.md) and
-   [structured workflow results](structured-results.md) are implemented.
-   Payment collection, subscription entitlements, calendar billing cycles
-   and automated reconciliation with actual provider charges remain separate
-   product work; usage-based cost estimates do not implement those features.
+2. **Payment-provider integration and financial operations.**
+   [Subscriptions and metered overage](subscriptions-billing.md) provide
+   immutable plans, paid calendar periods, consent caps, internal invoices
+   and operator-attested payment records. The core is disabled by default.
+   Select a payment provider before adding hosted checkout, verified callbacks,
+   recurring collection, uncertain-payment reconciliation, refunds and fiscal
+   documents. Reconciliation with actual inference-provider charges remains
+   separate from retail subscription billing and usage-based cost estimates.
 3. **A measured GGUF deployment.** The [portable GGUF pilot](cloud-gguf.md)
    provides a separate llama.cpp deployment configuration and bounded
    verification/probe tooling. Choose a licensed model, hosting plan and

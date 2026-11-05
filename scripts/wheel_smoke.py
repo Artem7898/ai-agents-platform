@@ -49,6 +49,7 @@ def main() -> None:
                 "'config.settings.test'); import django; django.setup(); "
                 "import config.asgi; import src.runs.executor; "
                 "import src.gguf.artifacts; import src.gguf.pilot; "
+                "import src.billing.services; import src.billing.api; "
                 "print('wheel base import smoke passed')",
             ],
             cwd=root,

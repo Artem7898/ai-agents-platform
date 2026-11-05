@@ -78,6 +78,7 @@ class LLMInvocationSerializer(serializers.ModelSerializer):
             "operation",
             "status",
             "quota_window",
+            "billing_period",
             "reserved_tokens",
             "max_output_tokens",
             "reservation_active",
@@ -151,6 +152,10 @@ class LLMInvocationViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Acc
         if run_id is not None:
             run_id = serializers.UUIDField().run_validation(run_id)
             queryset = queryset.filter(run_id=run_id)
+        billing_period_id = self.request.query_params.get("billing_period_id")
+        if billing_period_id is not None:
+            billing_period_id = serializers.UUIDField().run_validation(billing_period_id)
+            queryset = queryset.filter(billing_period_id=billing_period_id)
         return queryset
 
     def get_permissions(self):

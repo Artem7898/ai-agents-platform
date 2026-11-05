@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import dj_database_url
 import structlog
@@ -54,6 +54,8 @@ class EnvSettings(BaseSettings):
     LLM_TRANSPORT_MAX_RETRIES: int = Field(default=2, ge=0, le=2)
     LLM_RETRY_BASE_SECONDS: float = Field(default=0.25, ge=0, le=10)
     LLM_RESERVATION_OVERHEAD_TOKENS: int = Field(default=512, ge=0, le=8192)
+    BILLING_ENABLED: bool = False
+    BILLING_MODE: Literal["test", "live"] = "test"
 
     @field_validator("LLM_SECRET_BINDINGS")
     @classmethod
@@ -89,6 +91,8 @@ OUTBOX_MAX_ATTEMPTS = env.OUTBOX_MAX_ATTEMPTS
 LLM_TRANSPORT_MAX_RETRIES = env.LLM_TRANSPORT_MAX_RETRIES
 LLM_RETRY_BASE_SECONDS = env.LLM_RETRY_BASE_SECONDS
 LLM_RESERVATION_OVERHEAD_TOKENS = env.LLM_RESERVATION_OVERHEAD_TOKENS
+BILLING_ENABLED = env.BILLING_ENABLED
+BILLING_MODE = env.BILLING_MODE
 DEBUG = False
 ALLOWED_HOSTS = env.ALLOWED_HOSTS
 INSTALLED_APPS = [
@@ -108,6 +112,7 @@ INSTALLED_APPS = [
     "src.agents",
     "src.runtimes",
     "src.usage",
+    "src.billing",
     "src.workflows",
     "src.runs",
 ]

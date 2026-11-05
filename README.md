@@ -4,7 +4,7 @@ A Django 5.2 LTS backend for persisted AI workflows, with Django REST Framework 
 
 The project provides a foundation for authenticated workflow execution, graph validation, checkpoints and recovery. External tool effects need their own idempotency guarantees: retrying a message cannot guarantee exactly-once effects in another system. Latency, throughput and availability depend on the deployment and must be measured there.
 
-[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md) · [GGUF pilot](docs/cloud-gguf.md)
+[Русская инструкция](README_RU.md) · [Operations and recovery](docs/operations.md) · [LLM runtimes](docs/llm-runtimes.md) · [Secret Manager](docs/secret-manager.md) · [GGUF pilot](docs/cloud-gguf.md) · [Subscriptions and billing](docs/subscriptions-billing.md)
 
 ## Local setup
 
@@ -108,6 +108,8 @@ Managed credential aliases can use Vault KV v2, AWS Secrets Manager and Google S
 ## LLM usage and quotas
 
 Workflow calls now have an owner-scoped invocation ledger, concurrency-safe request/token quotas, and optional versioned cost estimates. Staff manages quota policies; unknown provider usage stays unresolved until reconciliation. See [LLM usage and quotas](docs/llm-usage.md) for API access, reservation semantics and operational limits.
+
+[Subscriptions and metered overage](docs/subscriptions-billing.md) adds immutable monthly plans, paid calendar periods, consented overage caps and internal invoices. Billing is disabled by default; payment confirmation is a staff attestation until a payment provider is selected.
 
 ## Checks
 

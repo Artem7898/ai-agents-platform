@@ -25,6 +25,8 @@ class QuotaExceeded(ValueError):
         message = (
             "Run token budget exceeded"
             if scope == "run"
+            else "The owner's subscription does not authorize this LLM call"
+            if scope == "billing"
             else "The owner's LLM quota has been exhausted"
         )
         super().__init__(message)

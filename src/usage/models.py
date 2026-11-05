@@ -102,6 +102,7 @@ class LLMInvocation(models.Model):
     if TYPE_CHECKING:
         run_id: uuid.UUID
         quota_window_id: int | None
+        billing_period_id: uuid.UUID | None
         runtime_id: uuid.UUID | None
 
     class Status(models.TextChoices):
@@ -149,6 +150,13 @@ class LLMInvocation(models.Model):
     )
     quota_window = models.ForeignKey(
         QuotaWindow, null=True, blank=True, on_delete=models.PROTECT, related_name="invocations"
+    )
+    billing_period = models.ForeignKey(
+        "billing.BillingPeriod",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="invocations",
     )
     reserved_tokens = models.PositiveBigIntegerField()
     max_output_tokens = models.PositiveIntegerField()
