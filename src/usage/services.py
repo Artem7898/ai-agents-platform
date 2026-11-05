@@ -13,6 +13,12 @@ from django.db.models import BigIntegerField, Case, F, Max, Sum, Value, When
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from src.billing.entitlements import (
+    lock_current_period,
+    lock_invocation_period,
+    period_denial,
+    reserve_period,
+)
 from src.runs.exceptions import CancellationRequested, ExecutionLeaseLost, RunStateConflict
 from src.runs.models import WorkflowRun
 from src.runs.persistence import _append_locked, _assert_lease
@@ -77,8 +83,11 @@ def _window(quota, now):
 
 def _locked(invocation_id):
     # Discover the immutable relationships before locking in the common order.
-    reference = LLMInvocation.objects.only("run_id", "quota_window_id").get(pk=invocation_id)
+    reference = LLMInvocation.objects.only("run_id", "quota_window_id", "billing_period_id").get(
+        pk=invocation_id
+    )
     run = WorkflowRun.objects.select_for_update().get(pk=reference.run_id)
+    period = lock_invocation_period(reference.billing_period_id)
     window = None
     if reference.quota_window_id:
         quota_id = QuotaWindow.objects.values_list("quota_id", flat=True).get(
@@ -87,7 +96,7 @@ def _locked(invocation_id):
         OwnerQuota.objects.select_for_update().get(pk=quota_id)
         window = QuotaWindow.objects.select_for_update().get(pk=reference.quota_window_id)
     invocation = LLMInvocation.objects.select_for_update().get(pk=invocation_id)
-    return run, window, invocation
+    return run, period, window, invocation
 
 
 def _assert_invocation_token(invocation, token):
@@ -96,19 +105,21 @@ def _assert_invocation_token(invocation, token):
         raise ExecutionLeaseLost("The invocation belongs to another execution token")
 
 
-def _release(invocation, window, total=None, *, not_sent=False):
+def _release(invocation, period, window, total=None, *, not_sent=False):
     if not invocation.reservation_active:
         return
-    if window:
-        window.reserved_tokens -= invocation.reserved_tokens
+    for bucket in (period, window):
+        if bucket is None:
+            continue
+        bucket.reserved_tokens -= invocation.reserved_tokens
         if invocation.dispatched_at is None:
-            window.reserved_calls -= 1
+            bucket.reserved_calls -= 1
             if not not_sent:
-                window.used_calls += 1
+                bucket.used_calls += 1
         if total is not None:
             # Never clamp actual usage to the estimate: overdrawn windows block admission.
-            window.used_tokens += total
-        window.save(
+            bucket.used_tokens += total
+        bucket.save(
             update_fields=["reserved_tokens", "reserved_calls", "used_tokens", "used_calls"]
         )
     invocation.reservation_active = False
@@ -202,13 +213,15 @@ def reserve(
             raise ValueError("The run has an invalid token budget")
         run_denied = baseline + budget_tokens_for_run(run.pk) + estimated_tokens > run_limit
         owner_id = run.billing_owner_id
+        period, billing_denied = lock_current_period(owner_id)
+        billing_denied = billing_denied or period_denial(period, estimated_tokens)
         quota = (
             OwnerQuota.objects.select_for_update().filter(owner_id=owner_id).first()
             if owner_id
             else None
         )
         window = _window(quota, now) if quota and quota.enabled else None
-        denied = run_denied
+        denied = run_denied or billing_denied is not None
         if window:
             assert quota is not None
             denied = (
@@ -255,12 +268,15 @@ def reserve(
             operation=operation,
             execution_token=context.execution_token,
             quota_window=window,
+            billing_period=period,
             reserved_tokens=estimated_tokens,
             max_output_tokens=max_output_tokens,
             reservation_active=not denied,
             status="quota_denied" if denied else "reserved",
             finished_at=now if denied else None,
-            error_code=("run_token_limit" if run_denied else "quota_exceeded") if denied else None,
+            error_code=("run_token_limit" if run_denied else billing_denied or "quota_exceeded")
+            if denied
+            else None,
             rate=rate,
             rate_version=rate.version if rate else None,
             currency=rate.currency if rate else None,
@@ -272,17 +288,21 @@ def reserve(
             window.reserved_tokens += estimated_tokens
             window.reserved_calls += 1
             window.save(update_fields=["reserved_tokens", "reserved_calls"])
+        if not denied:
+            reserve_period(period, estimated_tokens)
         _event(run, invocation, "llm.quota_denied" if denied else "llm.reserved")
     # Outside atomic: rejection evidence must survive the exception.
     if denied:
-        raise QuotaExceeded(invocation.pk, scope="run" if run_denied else "owner")
+        raise QuotaExceeded(
+            invocation.pk, scope="run" if run_denied else "billing" if billing_denied else "owner"
+        )
     return Reservation(invocation.pk, estimated_tokens, attempt)
 
 
 @sync_to_async(thread_sensitive=True)
 def mark_dispatched(invocation_id: UUID, execution_token: UUID | None = None) -> None:
     with transaction.atomic():
-        run, window, invocation = _locked(invocation_id)
+        run, period, window, invocation = _locked(invocation_id)
         _assert_invocation_token(invocation, execution_token)
         _assert_lease(run, execution_token)
         if invocation.dispatched_at is not None:
@@ -295,10 +315,11 @@ def mark_dispatched(invocation_id: UUID, execution_token: UUID | None = None) ->
             raise ValueError("Only an admitted reservation can be dispatched")
         invocation.dispatched_at = timezone.now()
         invocation.status = "dispatched"
-        if window:
-            window.reserved_calls -= 1
-            window.used_calls += 1
-            window.save(update_fields=["reserved_calls", "used_calls"])
+        for bucket in (period, window):
+            if bucket is not None:
+                bucket.reserved_calls -= 1
+                bucket.used_calls += 1
+                bucket.save(update_fields=["reserved_calls", "used_calls"])
         invocation.save(update_fields=["dispatched_at", "status"])
         _event(run, invocation, "llm.dispatched")
 
@@ -317,7 +338,7 @@ def finalize(
         raise ValueError("Invalid invocation settlement status")
     metrics = _usage(usage)
     with transaction.atomic():
-        run, window, invocation = _locked(invocation_id)
+        run, period, window, invocation = _locked(invocation_id)
         _assert_invocation_token(invocation, execution_token)
         if invocation.status == "quota_denied":
             raise ValueError("A denied invocation cannot be settled")
@@ -352,9 +373,9 @@ def finalize(
             _safe_identifier(error_code, 64, fallback="provider_error") or invocation.error_code
         )
         if invocation.dispatched_at is None:
-            _release(invocation, window, not_sent=True)
+            _release(invocation, period, window, not_sent=True)
         elif invocation.total_tokens is not None:
-            _release(invocation, window, invocation.total_tokens)
+            _release(invocation, period, window, invocation.total_tokens)
         known = sum(getattr(invocation, field) is not None for field in _METRICS)
         invocation.usage_status = "reported" if known == 3 else "partial" if known else "unknown"
         _price(invocation)
@@ -380,7 +401,7 @@ def reconcile(
     if not not_sent and (total_tokens is None or _usage(supplied) != supplied):
         raise ValueError("Reconciliation requires valid usage including a total")
     with transaction.atomic():
-        run, window, invocation = _locked(invocation_id)
+        run, period, window, invocation = _locked(invocation_id)
         if invocation.usage_status == "reconciled":
             if not_sent:
                 if invocation.error_code == "reconciled_not_sent":
@@ -401,12 +422,14 @@ def reconcile(
             if any(getattr(invocation, field) is not None for field in _METRICS):
                 raise ValueError("Reported usage conflicts with a not-sent assertion")
             # A confirmed non-send can reverse the conservative dispatch marker.
-            if window and invocation.dispatched_at and invocation.reservation_active:
-                window.used_calls -= 1
-                window.reserved_calls += 1
-                window.save(update_fields=["used_calls", "reserved_calls"])
+            if invocation.dispatched_at and invocation.reservation_active:
+                for bucket in (period, window):
+                    if bucket is not None:
+                        bucket.used_calls -= 1
+                        bucket.reserved_calls += 1
+                        bucket.save(update_fields=["used_calls", "reserved_calls"])
             invocation.dispatched_at = None
-            _release(invocation, window, not_sent=True)
+            _release(invocation, period, window, not_sent=True)
             invocation.status = "cancelled"
             invocation.error_code = "reconciled_not_sent"
         else:
@@ -415,7 +438,7 @@ def reconcile(
                 if existing is not None and value != existing:
                     raise ValueError("Reconciliation cannot overwrite reported usage")
                 setattr(invocation, field, value)
-            _release(invocation, window, total_tokens)
+            _release(invocation, period, window, total_tokens)
             if invocation.finished_at is None:
                 invocation.status = "unknown"
             _price(invocation)
