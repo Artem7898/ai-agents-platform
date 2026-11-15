@@ -8,6 +8,12 @@ Backend для сохраняемых AI workflow: Django 5.2 LTS, DRF для CR
 
 [Консоль AgentOps](docs/console.md) по адресу `/console/` добавляет dashboard, управление агентами и workflow, просмотр запусков и биллинга. Вход выполняется по Django-сессии. Перед запуском интерфейса соберите frontend или используйте Docker-сборку приложения; существующие Token API сохраняют свои правила доступа.
 
+## Демонстрация
+
+[![Посмотреть демонстрацию AgentOps на YouTube](https://img.youtube.com/vi/JJQbyxYIONE/hqdefault.jpg)](https://youtu.be/JJQbyxYIONE)
+
+[Посмотреть видео на YouTube](https://youtu.be/JJQbyxYIONE) · [Описание интерфейса](docs/console.md#interface-preview)
+
 ## Локальный запуск
 
 Установите [uv](https://docs.astral.sh/uv/), Node.js 24, Docker и Compose:

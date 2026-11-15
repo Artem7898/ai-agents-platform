@@ -8,6 +8,12 @@ The project provides a foundation for authenticated workflow execution, graph va
 
 The [AgentOps console](docs/console.md) at `/console/` adds a session-authenticated dashboard, agent/workflow management, run inspection and billing views. Build the frontend assets before serving the console, or use the application Docker build. The existing token APIs retain their authentication rules.
 
+## Product demo
+
+[![Watch the AgentOps product demo on YouTube](https://img.youtube.com/vi/JJQbyxYIONE/hqdefault.jpg)](https://youtu.be/JJQbyxYIONE)
+
+[Watch the demo on YouTube](https://youtu.be/JJQbyxYIONE) · [Interface guide](docs/console.md#interface-preview)
+
 ## Local setup
 
 Install [uv](https://docs.astral.sh/uv/), Node.js 24 and Docker with Compose, then:
