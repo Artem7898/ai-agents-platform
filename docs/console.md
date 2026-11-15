@@ -2,6 +2,12 @@
 
 The console at `/console/` provides a browser interface for the existing workflow platform. Its light dashboard, purple navigation and card layout follow the supplied AgentOps reference. The cards use workspace data: the application does not populate production counters with the screenshot's example values.
 
+## Interface preview
+
+[![Watch the AgentOps console demo on YouTube](https://img.youtube.com/vi/JJQbyxYIONE/hqdefault.jpg)](https://youtu.be/JJQbyxYIONE)
+
+[Watch the demo on YouTube](https://youtu.be/JJQbyxYIONE). Click the thumbnail to watch on YouTube.
+
 ## Build and start
 
 Use the normal Python/PostgreSQL setup from the [README](../README.md). Install Node.js 24 and the locked frontend dependencies, then build the browser assets from the repository root:
