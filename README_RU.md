@@ -14,6 +14,11 @@ Backend для сохраняемых AI workflow: Django 5.2 LTS, DRF для CR
 
 [Посмотреть видео на YouTube](https://youtu.be/JJQbyxYIONE) · [Описание интерфейса](docs/console.md#interface-preview)
 
+## Авторы последних обновлений
+
+- Автор: [Artem7898](https://github.com/Artem7898).
+- Соавтор: [alexander-pyrforos](https://github.com/alexander-pyrforos).
+
 ## Локальный запуск
 
 Установите [uv](https://docs.astral.sh/uv/), Node.js 24, Docker и Compose:

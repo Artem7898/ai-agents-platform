@@ -14,6 +14,11 @@ The [AgentOps console](docs/console.md) at `/console/` adds a session-authentica
 
 [Watch the demo on YouTube](https://youtu.be/JJQbyxYIONE) · [Interface guide](docs/console.md#interface-preview)
 
+## Authors of recent updates
+
+- Author: [Artem7898](https://github.com/Artem7898).
+- Co-author: [alexander-pyrforos](https://github.com/alexander-pyrforos).
+
 ## Local setup
 
 Install [uv](https://docs.astral.sh/uv/), Node.js 24 and Docker with Compose, then:
