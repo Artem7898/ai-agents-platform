@@ -1,0 +1,165 @@
+{
+  "verified_at": "2026-11-28T15:59:34.558340+00:00",
+  "status": "passed",
+  "provider": "mock_ollama_protocol",
+  "mocked": true,
+  "real_model_quality_assessed": false,
+  "verification_mode": "read-only run inspection via owned supervisor; metadata comparison",
+  "database_mutations_during_verification": false,
+  "metadata_sha256": "674e0c9f9d32b31821aee659a7f2ff90d42fbfdab03e09f2be34c7b656b5eed7",
+  "checks": {
+    "billing_completed": true,
+    "billing_save_checkpoint_done": true,
+    "billing_exactly_one_receipt": true,
+    "billing_resume_attempts_two": true,
+    "billing_two_sink_attempts": true,
+    "billing_sink_created_then_replayed": true,
+    "billing_original_receipt_preserved": true,
+    "billing_receipt_consistent_with_recorded_recovery": true,
+    "worker_actually_sigkilled": true,
+    "before_crash_receipt_committed_and_checkpoint_unfinished": true,
+    "replacement_after_persisted_lease_expiry": true,
+    "correction_completed": true,
+    "correction_exactly_one_receipt": true,
+    "correction_saved_as_acceso": true,
+    "correction_consistent_with_recorded_result": true,
+    "mock_provider_disclosed": true
+  },
+  "billing": {
+    "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+    "status": "completed",
+    "server_time": "2026-11-28T15:59:34.088667+00:00",
+    "run_lease_expires_at": null,
+    "checkpoint_completed": [
+      "classify",
+      "approval",
+      "approved",
+      "save_ticket"
+    ],
+    "checkpoint_waiting": [],
+    "save_checkpoint_done": true,
+    "commands": [
+      {
+        "id": "3d77e155-88ef-42d3-bd47-722730ad02d9",
+        "topic": "run_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:52:59.276479+00:00",
+        "locked_at": "2026-11-28 15:53:00.541447+00:00"
+      },
+      {
+        "id": "1d831a23-47a8-4e29-90d2-e44da28f35f7",
+        "topic": "resume_workflow",
+        "status": "completed",
+        "attempts": 2,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:53:22.652347+00:00",
+        "locked_at": "2026-11-28 15:53:45.488974+00:00"
+      }
+    ],
+    "receipt_count": 1,
+    "receipts": [
+      {
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+        "ticket_id": "ES-001",
+        "category": "Facturación",
+        "payload_hash": "884262fced16fd51dc47405208c86c17568758a14eb382c4bc2af40178aaabd3",
+        "created_at": "2026-11-28T15:53:23.928736+00:00"
+      }
+    ],
+    "sink_attempts": [
+      {
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "outcome": "created",
+        "created_at": "2026-11-28 15:53:23.930031+00:00"
+      },
+      {
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "outcome": "replayed",
+        "created_at": "2026-11-28 15:53:45.568172+00:00"
+      }
+    ]
+  },
+  "correction": {
+    "run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+    "status": "completed",
+    "server_time": "2026-11-28T15:59:34.403626+00:00",
+    "run_lease_expires_at": null,
+    "checkpoint_completed": [
+      "classify",
+      "approval",
+      "approved",
+      "save_ticket"
+    ],
+    "checkpoint_waiting": [],
+    "save_checkpoint_done": true,
+    "commands": [
+      {
+        "id": "bcc7ede6-a7e2-4006-86c3-725b47593860",
+        "topic": "run_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:54:10.579234+00:00",
+        "locked_at": "2026-11-28 15:54:11.750178+00:00"
+      },
+      {
+        "id": "0691a918-ab68-496d-a385-25410ba29e86",
+        "topic": "resume_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:54:26.888165+00:00",
+        "locked_at": "2026-11-28 15:54:27.905065+00:00"
+      }
+    ],
+    "receipt_count": 1,
+    "receipts": [
+      {
+        "receipt_id": "f487f093-71b8-40d8-b932-e73da36f1a15",
+        "idempotency_key": "3fd7f21f-74da-406e-992e-066f8e86d808:save_ticket:tool",
+        "run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+        "ticket_id": "ES-AMB-001",
+        "category": "Acceso",
+        "payload_hash": "4477a5304240df4a35f4ab19c63b6df4494183029822d474d354a4d5ff4214e2",
+        "created_at": "2026-11-28T15:54:28.020674+00:00"
+      }
+    ],
+    "sink_attempts": [
+      {
+        "idempotency_key": "3fd7f21f-74da-406e-992e-066f8e86d808:save_ticket:tool",
+        "receipt_id": "f487f093-71b8-40d8-b932-e73da36f1a15",
+        "outcome": "created",
+        "created_at": "2026-11-28 15:54:28.022577+00:00"
+      }
+    ]
+  },
+  "cleanup": {
+    "requested_scope": "owned presentation supervisor/web8010/sink8012/mock11436/workers only",
+    "shared_postgres_untouched": true,
+    "repository_untouched": true,
+    "completed": true,
+    "completed_at": "2026-11-28T16:00:03.674728+00:00",
+    "method": "control stop; supervisor waited for and reaped its own child handles",
+    "supervisor_exit_code": 0,
+    "backend_state": {
+      "ready": false,
+      "stopped": true
+    },
+    "presentation_listeners_remaining": [],
+    "verified_closed_ports": [
+      8010,
+      8012,
+      11436
+    ],
+    "shared_postgres_port_55432_still_listening": true,
+    "container_stop_or_restart_requested": false,
+    "repository_head": "90c6000a50f90cc2d749f91bbd6edcab2453ed90",
+    "repository_status_clean": true
+  }
+}

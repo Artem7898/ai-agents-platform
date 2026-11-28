@@ -1,0 +1,1229 @@
+{
+  "provider": "mock_ollama_protocol",
+  "mocked": true,
+  "scripted_ui_actions": true,
+  "real": [
+    "browser",
+    "PostgreSQL",
+    "agent CRUD",
+    "workflow",
+    "worker",
+    "human-approval command",
+    "HTTP sink"
+  ],
+  "assessed_real_model_quality": false,
+  "source_commit": "90c6000a50f90cc2d749f91bbd6edcab2453ed90",
+  "steps": [
+    {
+      "id": "intro",
+      "start": 0.43,
+      "end": 6.43
+    },
+    {
+      "id": "disclosure",
+      "start": 6.431,
+      "end": 13.441
+    },
+    {
+      "id": "url",
+      "start": 13.442,
+      "end": 18.445
+    },
+    {
+      "id": "agents",
+      "start": 18.446,
+      "end": 25.446
+    },
+    {
+      "id": "agent-name",
+      "start": 25.448,
+      "end": 32.448
+    },
+    {
+      "id": "runtime",
+      "start": 32.449,
+      "end": 39.448
+    },
+    {
+      "id": "prompt",
+      "start": 39.449,
+      "end": 49.449
+    },
+    {
+      "id": "permissions",
+      "start": 49.45,
+      "end": 56.451
+    },
+    {
+      "id": "save-agent",
+      "start": 56.452,
+      "end": 62.454
+    },
+    {
+      "id": "workflow",
+      "start": 62.454,
+      "end": 71.461
+    },
+    {
+      "id": "bind-agent",
+      "start": 71.463,
+      "end": 80.463
+    },
+    {
+      "id": "schema",
+      "start": 80.464,
+      "end": 87.47
+    },
+    {
+      "id": "save-workflow",
+      "start": 87.471,
+      "end": 94.474
+    },
+    {
+      "id": "input",
+      "start": 94.475,
+      "end": 106.476
+    },
+    {
+      "id": "queue",
+      "start": 106.476,
+      "end": 114.479
+    },
+    {
+      "id": "triage",
+      "start": 114.48,
+      "end": 122.481
+    },
+    {
+      "id": "review",
+      "start": 122.482,
+      "end": 130.482
+    },
+    {
+      "id": "confirm",
+      "start": 130.483,
+      "end": 137.483
+    },
+    {
+      "id": "crash",
+      "start": 137.484,
+      "end": 143.491
+    },
+    {
+      "id": "lease",
+      "start": 143.492,
+      "end": 152.695
+    },
+    {
+      "id": "recovery",
+      "start": 152.697,
+      "end": 160.701
+    },
+    {
+      "id": "dedupe",
+      "start": 160.703,
+      "end": 167.708
+    },
+    {
+      "id": "second-input",
+      "start": 167.709,
+      "end": 177.709
+    },
+    {
+      "id": "second-proposal",
+      "start": 177.71,
+      "end": 184.713
+    },
+    {
+      "id": "correct",
+      "start": 184.713,
+      "end": 194.713
+    },
+    {
+      "id": "save-correction",
+      "start": 194.714,
+      "end": 202.715
+    },
+    {
+      "id": "correction-receipt",
+      "start": 202.716,
+      "end": 209.722
+    },
+    {
+      "id": "traces",
+      "start": 209.723,
+      "end": 218.725
+    },
+    {
+      "id": "closing",
+      "start": 218.726,
+      "end": 225.735
+    },
+    {
+      "id": "closing-disclosure",
+      "start": 225.736,
+      "end": 231.743
+    }
+  ],
+  "agent_id": "c59e036f-dce8-4245-bcd5-47b902b23af6",
+  "billing_run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+  "before_crash": {
+    "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+    "status": "running",
+    "server_time": "2026-11-28T15:53:24.218756+00:00",
+    "run_lease_expires_at": "2026-11-28 15:53:38.809407+00:00",
+    "checkpoint_completed": [
+      "classify",
+      "approval",
+      "approved"
+    ],
+    "checkpoint_waiting": [],
+    "save_checkpoint_done": false,
+    "commands": [
+      {
+        "id": "3d77e155-88ef-42d3-bd47-722730ad02d9",
+        "topic": "run_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:52:59.276479+00:00",
+        "locked_at": "2026-11-28 15:53:00.541447+00:00"
+      },
+      {
+        "id": "1d831a23-47a8-4e29-90d2-e44da28f35f7",
+        "topic": "resume_workflow",
+        "status": "processing",
+        "attempts": 1,
+        "lease_expires_at": "2026-11-28 15:53:38.809407+00:00",
+        "available_at": "2026-11-28 15:53:22.652347+00:00",
+        "locked_at": "2026-11-28 15:53:23.809407+00:00"
+      }
+    ],
+    "receipt_count": 1,
+    "receipts": [
+      {
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+        "ticket_id": "ES-001",
+        "category": "Facturación",
+        "payload_hash": "884262fced16fd51dc47405208c86c17568758a14eb382c4bc2af40178aaabd3",
+        "created_at": "2026-11-28T15:53:23.928736+00:00"
+      }
+    ],
+    "sink_attempts": [
+      {
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "outcome": "created",
+        "created_at": "2026-11-28 15:53:23.930031+00:00"
+      }
+    ]
+  },
+  "killed_worker": {
+    "ok": true,
+    "action": "worker-kill",
+    "returncode": -9
+  },
+  "after_kill": {
+    "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+    "status": "running",
+    "server_time": "2026-11-28T15:53:29.359439+00:00",
+    "run_lease_expires_at": "2026-11-28 15:53:43.823762+00:00",
+    "checkpoint_completed": [
+      "classify",
+      "approval",
+      "approved"
+    ],
+    "checkpoint_waiting": [],
+    "save_checkpoint_done": false,
+    "commands": [
+      {
+        "id": "3d77e155-88ef-42d3-bd47-722730ad02d9",
+        "topic": "run_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:52:59.276479+00:00",
+        "locked_at": "2026-11-28 15:53:00.541447+00:00"
+      },
+      {
+        "id": "1d831a23-47a8-4e29-90d2-e44da28f35f7",
+        "topic": "resume_workflow",
+        "status": "processing",
+        "attempts": 1,
+        "lease_expires_at": "2026-11-28 15:53:43.823762+00:00",
+        "available_at": "2026-11-28 15:53:22.652347+00:00",
+        "locked_at": "2026-11-28 15:53:23.809407+00:00"
+      }
+    ],
+    "receipt_count": 1,
+    "receipts": [
+      {
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+        "ticket_id": "ES-001",
+        "category": "Facturación",
+        "payload_hash": "884262fced16fd51dc47405208c86c17568758a14eb382c4bc2af40178aaabd3",
+        "created_at": "2026-11-28T15:53:23.928736+00:00"
+      }
+    ],
+    "sink_attempts": [
+      {
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "outcome": "created",
+        "created_at": "2026-11-28 15:53:23.930031+00:00"
+      }
+    ]
+  },
+  "lease_wait_started_at": "2026-11-28T15:53:35.398Z",
+  "replacement_started_at": "2026-11-28T15:53:44.228Z",
+  "recovery": {
+    "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+    "status": "completed",
+    "server_time": "2026-11-28T15:53:45.696034+00:00",
+    "run_lease_expires_at": null,
+    "checkpoint_completed": [
+      "classify",
+      "approval",
+      "approved",
+      "save_ticket"
+    ],
+    "checkpoint_waiting": [],
+    "save_checkpoint_done": true,
+    "commands": [
+      {
+        "id": "3d77e155-88ef-42d3-bd47-722730ad02d9",
+        "topic": "run_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:52:59.276479+00:00",
+        "locked_at": "2026-11-28 15:53:00.541447+00:00"
+      },
+      {
+        "id": "1d831a23-47a8-4e29-90d2-e44da28f35f7",
+        "topic": "resume_workflow",
+        "status": "completed",
+        "attempts": 2,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:53:22.652347+00:00",
+        "locked_at": "2026-11-28 15:53:45.488974+00:00"
+      }
+    ],
+    "receipt_count": 1,
+    "receipts": [
+      {
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+        "ticket_id": "ES-001",
+        "category": "Facturación",
+        "payload_hash": "884262fced16fd51dc47405208c86c17568758a14eb382c4bc2af40178aaabd3",
+        "created_at": "2026-11-28T15:53:23.928736+00:00"
+      }
+    ],
+    "sink_attempts": [
+      {
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "outcome": "created",
+        "created_at": "2026-11-28 15:53:23.930031+00:00"
+      },
+      {
+        "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool",
+        "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+        "outcome": "replayed",
+        "created_at": "2026-11-28 15:53:45.568172+00:00"
+      }
+    ]
+  },
+  "correction_run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+  "correction": {
+    "run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+    "status": "completed",
+    "server_time": "2026-11-28T15:54:28.423800+00:00",
+    "run_lease_expires_at": null,
+    "checkpoint_completed": [
+      "classify",
+      "approval",
+      "approved",
+      "save_ticket"
+    ],
+    "checkpoint_waiting": [],
+    "save_checkpoint_done": true,
+    "commands": [
+      {
+        "id": "bcc7ede6-a7e2-4006-86c3-725b47593860",
+        "topic": "run_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:54:10.579234+00:00",
+        "locked_at": "2026-11-28 15:54:11.750178+00:00"
+      },
+      {
+        "id": "0691a918-ab68-496d-a385-25410ba29e86",
+        "topic": "resume_workflow",
+        "status": "completed",
+        "attempts": 1,
+        "lease_expires_at": null,
+        "available_at": "2026-11-28 15:54:26.888165+00:00",
+        "locked_at": "2026-11-28 15:54:27.905065+00:00"
+      }
+    ],
+    "receipt_count": 1,
+    "receipts": [
+      {
+        "receipt_id": "f487f093-71b8-40d8-b932-e73da36f1a15",
+        "idempotency_key": "3fd7f21f-74da-406e-992e-066f8e86d808:save_ticket:tool",
+        "run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+        "ticket_id": "ES-AMB-001",
+        "category": "Acceso",
+        "payload_hash": "4477a5304240df4a35f4ab19c63b6df4494183029822d474d354a4d5ff4214e2",
+        "created_at": "2026-11-28T15:54:28.020674+00:00"
+      }
+    ],
+    "sink_attempts": [
+      {
+        "idempotency_key": "3fd7f21f-74da-406e-992e-066f8e86d808:save_ticket:tool",
+        "receipt_id": "f487f093-71b8-40d8-b932-e73da36f1a15",
+        "outcome": "created",
+        "created_at": "2026-11-28 15:54:28.022577+00:00"
+      }
+    ]
+  },
+  "duration_seconds": 231.744,
+  "workflow": {
+    "id": "9f3460ee-5cf2-4d02-96fe-b479af74f330",
+    "owner": 1,
+    "name": "Tickets · Clasificar, revisar y guardar",
+    "version": 1,
+    "nodes": [
+      {
+        "id": "classify",
+        "kind": "llm_call",
+        "config": {
+          "prompt_template": "Asunto: {input.subject}\nDescripción: {input.text}"
+        },
+        "tool_id": null,
+        "agent_id": "c59e036f-dce8-4245-bcd5-47b902b23af6",
+        "output_schema": {
+          "id": "ticket_classification",
+          "version": 1
+        }
+      },
+      {
+        "id": "approval",
+        "kind": "hitl_approval",
+        "config": {},
+        "tool_id": null,
+        "agent_id": null,
+        "output_schema": null
+      },
+      {
+        "id": "approved",
+        "kind": "condition",
+        "config": {
+          "condition": {
+            "op": "eq",
+            "path": "nodes.approval.result.approved",
+            "value": true
+          }
+        },
+        "tool_id": null,
+        "agent_id": null,
+        "output_schema": null
+      },
+      {
+        "id": "save_ticket",
+        "kind": "tool_exec",
+        "config": {
+          "arguments": {
+            "ticket_id": "{input.ticket_id}",
+            "confirmation": "{nodes.approval.result}",
+            "classification": "{nodes.classify.result}"
+          },
+          "tool_name": "save_ticket_classification"
+        },
+        "tool_id": "574ee839-35c9-5416-b752-62884dc481f7",
+        "agent_id": null,
+        "output_schema": null
+      }
+    ],
+    "edges": [
+      {
+        "source": "classify",
+        "target": "approval",
+        "condition": null
+      },
+      {
+        "source": "approval",
+        "target": "approved",
+        "condition": null
+      },
+      {
+        "source": "approved",
+        "target": "save_ticket",
+        "condition": true
+      }
+    ],
+    "limits": {
+      "max_steps": 8,
+      "max_tokens": 12000,
+      "max_tool_calls": 1,
+      "max_tool_repairs": 0,
+      "max_output_tokens": 512,
+      "max_output_repairs": 1,
+      "max_duration_seconds": 900,
+      "tool_timeout_seconds": 90
+    },
+    "output_node_id": "save_ticket",
+    "created_at": "2026-11-28T15:50:36.317652Z",
+    "updated_at": "2026-11-28T15:52:39.681752Z"
+  },
+  "billing_events": {
+    "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+    "status": "completed",
+    "events": [
+      {
+        "id": "a13bd6e4-24ab-4bef-bf7b-cbf2a52267c7",
+        "sequence": 1,
+        "type": "status_changed",
+        "payload": {
+          "status": "pending"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:52:59.279456+00:00"
+      },
+      {
+        "id": "5db903c3-44c9-4b0e-be9c-97f96726337e",
+        "sequence": 2,
+        "type": "status_changed",
+        "payload": {
+          "status": "running"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:00.554823+00:00"
+      },
+      {
+        "id": "57811677-0659-47a4-ada9-815fd3097223",
+        "sequence": 3,
+        "type": "node_enter",
+        "payload": {
+          "kind": "llm_call",
+          "node_id": "classify"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:00.564602+00:00"
+      },
+      {
+        "id": "1d23441f-4b56-4403-ba3e-7cef2551533a",
+        "sequence": 4,
+        "type": "llm.reserved",
+        "payload": {
+          "status": "reserved",
+          "attempt": 1,
+          "node_id": "classify",
+          "model_name": "qwen2.5:3b",
+          "runtime_id": "9bf2c376-3042-4b60-81e6-aa214af16d70",
+          "logical_call": 0,
+          "total_tokens": null,
+          "usage_status": "unknown",
+          "invocation_id": "3e242c9e-a648-4a01-87e0-e051cce55108",
+          "prompt_tokens": null,
+          "reserved_tokens": 2530,
+          "completion_tokens": null
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:00.640215+00:00"
+      },
+      {
+        "id": "32472ebd-3814-4dc5-90da-e61c987465da",
+        "sequence": 5,
+        "type": "llm.dispatched",
+        "payload": {
+          "status": "dispatched",
+          "attempt": 1,
+          "node_id": "classify",
+          "model_name": "qwen2.5:3b",
+          "runtime_id": "9bf2c376-3042-4b60-81e6-aa214af16d70",
+          "logical_call": 0,
+          "total_tokens": null,
+          "usage_status": "unknown",
+          "invocation_id": "3e242c9e-a648-4a01-87e0-e051cce55108",
+          "prompt_tokens": null,
+          "reserved_tokens": 2530,
+          "completion_tokens": null
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:00.646009+00:00"
+      },
+      {
+        "id": "25829891-3766-41bc-ad4c-338b998ded77",
+        "sequence": 6,
+        "type": "llm.finalized",
+        "payload": {
+          "status": "succeeded",
+          "attempt": 1,
+          "node_id": "classify",
+          "model_name": "qwen2.5:3b",
+          "runtime_id": "9bf2c376-3042-4b60-81e6-aa214af16d70",
+          "logical_call": 0,
+          "total_tokens": 225,
+          "usage_status": "reported",
+          "invocation_id": "3e242c9e-a648-4a01-87e0-e051cce55108",
+          "prompt_tokens": 190,
+          "reserved_tokens": 2530,
+          "completion_tokens": 35
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:01.008131+00:00"
+      },
+      {
+        "id": "6611f480-f528-4d62-917b-c74baf1692fc",
+        "sequence": 7,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "classify"
+        },
+        "context_snapshot": {
+          "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+          "input": {
+            "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+            "subject": "Cargo duplicado en la factura",
+            "ticket_id": "ES-001"
+          },
+          "nodes": {
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            }
+          },
+          "subject": "Cargo duplicado en la factura",
+          "ticket_id": "ES-001",
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          }
+        },
+        "timestamp": "2026-11-28T15:53:01.021333+00:00"
+      },
+      {
+        "id": "ac24b68f-e0a5-4cd9-9d73-d83dafc1440b",
+        "sequence": 8,
+        "type": "node_enter",
+        "payload": {
+          "kind": "hitl_approval",
+          "node_id": "approval"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:01.029220+00:00"
+      },
+      {
+        "id": "743a1658-b80a-4f8b-bfc1-9e992b6bb771",
+        "sequence": 9,
+        "type": "hitl_waiting",
+        "payload": {
+          "node_id": "approval"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:01.035459+00:00"
+      },
+      {
+        "id": "38a284ca-0f5b-4d25-8dff-9e47f4dd7d63",
+        "sequence": 10,
+        "type": "status_changed",
+        "payload": {
+          "status": "waiting_human"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:01.040335+00:00"
+      },
+      {
+        "id": "a54f0150-ca6a-41c4-9a82-c40dd56c012f",
+        "sequence": 11,
+        "type": "status_changed",
+        "payload": {
+          "status": "running"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:23.825290+00:00"
+      },
+      {
+        "id": "c2d35420-7077-4932-abf8-9f90699dd2de",
+        "sequence": 12,
+        "type": "hitl_resumed",
+        "payload": {
+          "node_id": "approval"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:23.828744+00:00"
+      },
+      {
+        "id": "30b06030-37d0-41f8-8628-5e61ccb91566",
+        "sequence": 13,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "approval"
+        },
+        "context_snapshot": {
+          "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+          "input": {
+            "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+            "subject": "Cargo duplicado en la factura",
+            "ticket_id": "ES-001"
+          },
+          "nodes": {
+            "approval": {
+              "result": {
+                "note": "",
+                "approved": true,
+                "category": "Facturación"
+              }
+            },
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            }
+          },
+          "subject": "Cargo duplicado en la factura",
+          "ticket_id": "ES-001",
+          "hitl_input_approval": {
+            "note": "",
+            "approved": true,
+            "category": "Facturación"
+          },
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          }
+        },
+        "timestamp": "2026-11-28T15:53:23.831788+00:00"
+      },
+      {
+        "id": "f85471fd-b7cc-4a6e-8423-04b37a6bd152",
+        "sequence": 14,
+        "type": "node_enter",
+        "payload": {
+          "kind": "condition",
+          "node_id": "approved"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:23.844840+00:00"
+      },
+      {
+        "id": "6c045f1e-7fc7-47ac-820d-0c99199280c2",
+        "sequence": 15,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "approved"
+        },
+        "context_snapshot": {
+          "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+          "input": {
+            "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+            "subject": "Cargo duplicado en la factura",
+            "ticket_id": "ES-001"
+          },
+          "nodes": {
+            "approval": {
+              "result": {
+                "note": "",
+                "approved": true,
+                "category": "Facturación"
+              }
+            },
+            "approved": {
+              "result": true
+            },
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            }
+          },
+          "subject": "Cargo duplicado en la factura",
+          "ticket_id": "ES-001",
+          "hitl_input_approval": {
+            "note": "",
+            "approved": true,
+            "category": "Facturación"
+          },
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          }
+        },
+        "timestamp": "2026-11-28T15:53:23.852045+00:00"
+      },
+      {
+        "id": "af379415-1d27-4cfd-97a0-4aa6ab3ec76e",
+        "sequence": 16,
+        "type": "node_enter",
+        "payload": {
+          "kind": "tool_exec",
+          "node_id": "save_ticket"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:23.859800+00:00"
+      },
+      {
+        "id": "f6a99d4b-e9dd-44cf-b582-59a79f4654e3",
+        "sequence": 17,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "save_ticket"
+        },
+        "context_snapshot": {
+          "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+          "input": {
+            "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?",
+            "subject": "Cargo duplicado en la factura",
+            "ticket_id": "ES-001"
+          },
+          "nodes": {
+            "approval": {
+              "result": {
+                "note": "",
+                "approved": true,
+                "category": "Facturación"
+              }
+            },
+            "approved": {
+              "result": true
+            },
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            },
+            "save_ticket": {
+              "result": {
+                "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+                "category": "Facturación",
+                "ticket_id": "ES-001",
+                "created_at": "2026-11-28T15:53:23.928736+00:00",
+                "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+                "payload_hash": "884262fced16fd51dc47405208c86c17568758a14eb382c4bc2af40178aaabd3",
+                "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool"
+              }
+            }
+          },
+          "subject": "Cargo duplicado en la factura",
+          "ticket_id": "ES-001",
+          "hitl_input_approval": {
+            "note": "",
+            "approved": true,
+            "category": "Facturación"
+          },
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          },
+          "tool_result_save_ticket": {
+            "run_id": "bcbb0515-8675-4ccd-9b46-426041d90bb5",
+            "category": "Facturación",
+            "ticket_id": "ES-001",
+            "created_at": "2026-11-28T15:53:23.928736+00:00",
+            "receipt_id": "a41c0836-6822-411c-b0d1-956c3ca4a0b3",
+            "payload_hash": "884262fced16fd51dc47405208c86c17568758a14eb382c4bc2af40178aaabd3",
+            "idempotency_key": "bcbb0515-8675-4ccd-9b46-426041d90bb5:save_ticket:tool"
+          }
+        },
+        "timestamp": "2026-11-28T15:53:45.587839+00:00"
+      },
+      {
+        "id": "cfc1e0e6-0dfd-46df-826d-6b6104522c36",
+        "sequence": 18,
+        "type": "status_changed",
+        "payload": {
+          "status": "completed"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:53:45.594739+00:00"
+      }
+    ],
+    "next_after": 18,
+    "has_more": false
+  },
+  "correction_events": {
+    "run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+    "status": "completed",
+    "events": [
+      {
+        "id": "df5a9b98-88ec-43cf-81bf-7a0d7580b85f",
+        "sequence": 1,
+        "type": "status_changed",
+        "payload": {
+          "status": "pending"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:10.581462+00:00"
+      },
+      {
+        "id": "425a0d13-d5ff-40dd-8ff0-8474eb31098e",
+        "sequence": 2,
+        "type": "status_changed",
+        "payload": {
+          "status": "running"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:11.761865+00:00"
+      },
+      {
+        "id": "4e132a9d-7d67-41db-bcf1-44324bf2d241",
+        "sequence": 3,
+        "type": "node_enter",
+        "payload": {
+          "kind": "llm_call",
+          "node_id": "classify"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:11.769897+00:00"
+      },
+      {
+        "id": "68e4b586-5c8c-492a-8208-f67f67f9ce20",
+        "sequence": 4,
+        "type": "llm.reserved",
+        "payload": {
+          "status": "reserved",
+          "attempt": 1,
+          "node_id": "classify",
+          "model_name": "qwen2.5:3b",
+          "runtime_id": "9bf2c376-3042-4b60-81e6-aa214af16d70",
+          "logical_call": 0,
+          "total_tokens": null,
+          "usage_status": "unknown",
+          "invocation_id": "14b93a0b-e2eb-4728-89dd-4c53dc37fb44",
+          "prompt_tokens": null,
+          "reserved_tokens": 2496,
+          "completion_tokens": null
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:11.823136+00:00"
+      },
+      {
+        "id": "dd6d19c9-8a43-40e9-b287-dbd0c4991d9a",
+        "sequence": 5,
+        "type": "llm.dispatched",
+        "payload": {
+          "status": "dispatched",
+          "attempt": 1,
+          "node_id": "classify",
+          "model_name": "qwen2.5:3b",
+          "runtime_id": "9bf2c376-3042-4b60-81e6-aa214af16d70",
+          "logical_call": 0,
+          "total_tokens": null,
+          "usage_status": "unknown",
+          "invocation_id": "14b93a0b-e2eb-4728-89dd-4c53dc37fb44",
+          "prompt_tokens": null,
+          "reserved_tokens": 2496,
+          "completion_tokens": null
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:11.828865+00:00"
+      },
+      {
+        "id": "bd370406-13fe-4eca-9dfe-e717a5e5dbc0",
+        "sequence": 6,
+        "type": "llm.finalized",
+        "payload": {
+          "status": "succeeded",
+          "attempt": 1,
+          "node_id": "classify",
+          "model_name": "qwen2.5:3b",
+          "runtime_id": "9bf2c376-3042-4b60-81e6-aa214af16d70",
+          "logical_call": 0,
+          "total_tokens": 225,
+          "usage_status": "reported",
+          "invocation_id": "14b93a0b-e2eb-4728-89dd-4c53dc37fb44",
+          "prompt_tokens": 190,
+          "reserved_tokens": 2496,
+          "completion_tokens": 35
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:12.167923+00:00"
+      },
+      {
+        "id": "ab34b2a1-183b-4f86-8879-47afdaf55dc7",
+        "sequence": 7,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "classify"
+        },
+        "context_snapshot": {
+          "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+          "input": {
+            "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+            "subject": "No puedo entrar para consultar mi factura",
+            "ticket_id": "ES-AMB-001"
+          },
+          "nodes": {
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            }
+          },
+          "subject": "No puedo entrar para consultar mi factura",
+          "ticket_id": "ES-AMB-001",
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          }
+        },
+        "timestamp": "2026-11-28T15:54:12.180440+00:00"
+      },
+      {
+        "id": "7cb7c611-7a0c-4406-9f86-53400594fa33",
+        "sequence": 8,
+        "type": "node_enter",
+        "payload": {
+          "kind": "hitl_approval",
+          "node_id": "approval"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:12.188688+00:00"
+      },
+      {
+        "id": "c2492e5a-709d-4df9-ad18-e0dcd55e3551",
+        "sequence": 9,
+        "type": "hitl_waiting",
+        "payload": {
+          "node_id": "approval"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:12.195022+00:00"
+      },
+      {
+        "id": "e1ea7c47-9ef2-46be-8b2e-ce71d37a1e37",
+        "sequence": 10,
+        "type": "status_changed",
+        "payload": {
+          "status": "waiting_human"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:12.200008+00:00"
+      },
+      {
+        "id": "26a02b03-4ece-43b4-8ac4-66d04fd75e55",
+        "sequence": 11,
+        "type": "status_changed",
+        "payload": {
+          "status": "running"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:27.917747+00:00"
+      },
+      {
+        "id": "b7833835-3571-4a21-b32e-61c13cc3a6e2",
+        "sequence": 12,
+        "type": "hitl_resumed",
+        "payload": {
+          "node_id": "approval"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:27.920717+00:00"
+      },
+      {
+        "id": "2dcb5460-4147-432a-97ed-30d079f8436d",
+        "sequence": 13,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "approval"
+        },
+        "context_snapshot": {
+          "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+          "input": {
+            "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+            "subject": "No puedo entrar para consultar mi factura",
+            "ticket_id": "ES-AMB-001"
+          },
+          "nodes": {
+            "approval": {
+              "result": {
+                "note": "Recuperar el acceso a la cuenta.",
+                "approved": true,
+                "category": "Acceso"
+              }
+            },
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            }
+          },
+          "subject": "No puedo entrar para consultar mi factura",
+          "ticket_id": "ES-AMB-001",
+          "hitl_input_approval": {
+            "note": "Recuperar el acceso a la cuenta.",
+            "approved": true,
+            "category": "Acceso"
+          },
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          }
+        },
+        "timestamp": "2026-11-28T15:54:27.923391+00:00"
+      },
+      {
+        "id": "f98e2677-38b3-4fda-a9dc-ae9d29861407",
+        "sequence": 14,
+        "type": "node_enter",
+        "payload": {
+          "kind": "condition",
+          "node_id": "approved"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:27.936008+00:00"
+      },
+      {
+        "id": "6c2ec69c-95e6-4585-84d5-f4475daa98fa",
+        "sequence": 15,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "approved"
+        },
+        "context_snapshot": {
+          "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+          "input": {
+            "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+            "subject": "No puedo entrar para consultar mi factura",
+            "ticket_id": "ES-AMB-001"
+          },
+          "nodes": {
+            "approval": {
+              "result": {
+                "note": "Recuperar el acceso a la cuenta.",
+                "approved": true,
+                "category": "Acceso"
+              }
+            },
+            "approved": {
+              "result": true
+            },
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            }
+          },
+          "subject": "No puedo entrar para consultar mi factura",
+          "ticket_id": "ES-AMB-001",
+          "hitl_input_approval": {
+            "note": "Recuperar el acceso a la cuenta.",
+            "approved": true,
+            "category": "Acceso"
+          },
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          }
+        },
+        "timestamp": "2026-11-28T15:54:27.943023+00:00"
+      },
+      {
+        "id": "d7cac167-f5a3-435a-9359-b3781ae63290",
+        "sequence": 16,
+        "type": "node_enter",
+        "payload": {
+          "kind": "tool_exec",
+          "node_id": "save_ticket"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:27.952344+00:00"
+      },
+      {
+        "id": "cfc9c354-088a-41a0-a645-f47301728555",
+        "sequence": 17,
+        "type": "node_exit",
+        "payload": {
+          "node_id": "save_ticket"
+        },
+        "context_snapshot": {
+          "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+          "input": {
+            "text": "He olvidado mi contraseña y no puedo iniciar sesión. Necesito recuperar el acceso para consultar mi factura.",
+            "subject": "No puedo entrar para consultar mi factura",
+            "ticket_id": "ES-AMB-001"
+          },
+          "nodes": {
+            "approval": {
+              "result": {
+                "note": "Recuperar el acceso a la cuenta.",
+                "approved": true,
+                "category": "Acceso"
+              }
+            },
+            "approved": {
+              "result": true
+            },
+            "classify": {
+              "result": {
+                "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+                "category": "Facturación"
+              }
+            },
+            "save_ticket": {
+              "result": {
+                "run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+                "category": "Acceso",
+                "ticket_id": "ES-AMB-001",
+                "created_at": "2026-11-28T15:54:28.020674+00:00",
+                "receipt_id": "f487f093-71b8-40d8-b932-e73da36f1a15",
+                "payload_hash": "4477a5304240df4a35f4ab19c63b6df4494183029822d474d354a4d5ff4214e2",
+                "idempotency_key": "3fd7f21f-74da-406e-992e-066f8e86d808:save_ticket:tool"
+              }
+            }
+          },
+          "subject": "No puedo entrar para consultar mi factura",
+          "ticket_id": "ES-AMB-001",
+          "hitl_input_approval": {
+            "note": "Recuperar el acceso a la cuenta.",
+            "approved": true,
+            "category": "Acceso"
+          },
+          "llm_output_classify": {
+            "reason": "El ticket menciona una factura o un cobro que requiere revisión.",
+            "category": "Facturación"
+          },
+          "tool_result_save_ticket": {
+            "run_id": "3fd7f21f-74da-406e-992e-066f8e86d808",
+            "category": "Acceso",
+            "ticket_id": "ES-AMB-001",
+            "created_at": "2026-11-28T15:54:28.020674+00:00",
+            "receipt_id": "f487f093-71b8-40d8-b932-e73da36f1a15",
+            "payload_hash": "4477a5304240df4a35f4ab19c63b6df4494183029822d474d354a4d5ff4214e2",
+            "idempotency_key": "3fd7f21f-74da-406e-992e-066f8e86d808:save_ticket:tool"
+          }
+        },
+        "timestamp": "2026-11-28T15:54:28.040369+00:00"
+      },
+      {
+        "id": "08d04aa7-d651-4c25-96df-6b271603c340",
+        "sequence": 18,
+        "type": "status_changed",
+        "payload": {
+          "status": "completed"
+        },
+        "context_snapshot": null,
+        "timestamp": "2026-11-28T15:54:28.045866+00:00"
+      }
+    ],
+    "next_after": 18,
+    "has_more": false
+  }
+}

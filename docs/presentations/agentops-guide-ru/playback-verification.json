@@ -1,0 +1,65 @@
+{
+  "actual_browser_playback": true,
+  "advanced_seconds": 1.812509,
+  "width": 1920,
+  "height": 1080,
+  "duration": 239.56,
+  "error": null,
+  "samples": [
+    {
+      "id": "title",
+      "seconds": 2,
+      "path": "/workspace/agentops-presentation/review-frames/title.png"
+    },
+    {
+      "id": "prompt",
+      "seconds": 46.449,
+      "path": "/workspace/agentops-presentation/review-frames/prompt.png"
+    },
+    {
+      "id": "bind-agent",
+      "seconds": 78.463,
+      "path": "/workspace/agentops-presentation/review-frames/bind-agent.png"
+    },
+    {
+      "id": "triage",
+      "seconds": 121.48,
+      "path": "/workspace/agentops-presentation/review-frames/triage.png"
+    },
+    {
+      "id": "confirm",
+      "seconds": 137.483,
+      "path": "/workspace/agentops-presentation/review-frames/confirm.png"
+    },
+    {
+      "id": "crash",
+      "seconds": 144.484,
+      "path": "/workspace/agentops-presentation/review-frames/crash.png"
+    },
+    {
+      "id": "recovery",
+      "seconds": 159.697,
+      "path": "/workspace/agentops-presentation/review-frames/recovery.png"
+    },
+    {
+      "id": "dedupe",
+      "seconds": 167.703,
+      "path": "/workspace/agentops-presentation/review-frames/dedupe.png"
+    },
+    {
+      "id": "correct",
+      "seconds": 191.713,
+      "path": "/workspace/agentops-presentation/review-frames/correct.png"
+    },
+    {
+      "id": "correction-receipt",
+      "seconds": 209.716,
+      "path": "/workspace/agentops-presentation/review-frames/correction-receipt.png"
+    },
+    {
+      "id": "traces",
+      "seconds": 216.723,
+      "path": "/workspace/agentops-presentation/review-frames/traces.png"
+    }
+  ]
+}

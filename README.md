@@ -23,6 +23,12 @@ The [AgentOps console](docs/console.md) at `/console/` adds a session-authentica
 
 The [ticket triage acceptance scenario](docs/triage-demo.md) connects a local multilingual Ollama model to a Spanish operator review and an idempotent test destination. It includes fictional tickets, a versioned JSON output contract and a controlled worker crash after the destination commits. The operator screen is at `/console/triage/` when the demo is enabled. A real-model run requires downloading and probing the exact model; automated tests use an explicitly identified test provider.
 
+[![AgentOps guide: create an agent and review tickets](docs/presentations/agentops-guide-ru/preview.png)](docs/presentations/agentops-guide-ru/agentops-guide-ru.mp4)
+
+[Video guide (MP4, 3:59)](docs/presentations/agentops-guide-ru/agentops-guide-ru.mp4) · [Russian subtitles](docs/presentations/agentops-guide-ru/agentops-guide-ru.srt) · [Chapters and verification](docs/agentops-video-guide.md)
+
+The walkthrough shows agent creation, workflow configuration, Confirmar / Corregir and worker recovery without a duplicate record. It has Russian captions and no audio. LLM responses are simulated and labeled throughout; the application, PostgreSQL, workflow and worker restart are real. UI actions are scripted and all tickets are fictional. This recording does not assess a real model's quality.
+
 ## Local setup
 
 Install [uv](https://docs.astral.sh/uv/), Node.js 24 and Docker with Compose, then:
