@@ -37,6 +37,7 @@ urlpatterns = [
     path("health/", health_check, name="health-check"),
     path("ready/", readiness_check, name="readiness-check"),
     path("api/v1/", include("src.api.drf.urls")),
+    path("api/demo/triage/", include("src.triage.urls")),
     path("console/api/", include("src.console.urls")),
     path("console/", console, name="console"),
     path("console/<path:path>", console, name="console-page"),

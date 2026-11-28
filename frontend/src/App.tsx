@@ -26,6 +26,7 @@ import {
   ChevronDown,
   Command,
   CreditCard,
+  ClipboardCheck,
   ExternalLink,
   LayoutDashboard,
   ListTree,
@@ -53,6 +54,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Agents = lazy(() => import("./pages/Agents"));
 const Workflows = lazy(() => import("./pages/Workflows"));
 const Runs = lazy(() => import("./pages/Runs"));
+const Triage = lazy(() => import("./pages/Triage"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
 const Observability = lazy(() => import("./pages/Observability"));
 const Billing = lazy(() => import("./pages/Billing"));
@@ -79,6 +81,13 @@ const navigation = [
     icon: Workflow,
     title: "Workflow Builder",
     description: "Design and manage durable agent workflows",
+  },
+  {
+    to: "/triage",
+    label: "Solicitudes",
+    icon: ClipboardCheck,
+    title: "Solicitudes",
+    description: "Revisa la clasificación y confirma cada solicitud",
   },
   {
     to: "/runs",
@@ -581,6 +590,7 @@ function Layout() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/agents" element={<Agents />} />
               <Route path="/workflows" element={<Workflows />} />
+              <Route path="/triage" element={<Triage />} />
               <Route path="/runs" element={<Runs />} />
               <Route path="/runs/:id" element={<Runs />} />
               <Route path="/knowledge" element={<Knowledge />} />

@@ -1,0 +1,42 @@
+[
+  {
+    "subject": "Cargo duplicado en la factura",
+    "ticket_id": "ES-001",
+    "text": "Hola, soy Clara del taller ficticio Nube de Papel. La factura de noviembre muestra dos cobros por la misma suscripción. ¿Podéis revisar el segundo cargo?"
+  },
+  {
+    "subject": "No puedo entrar en mi cuenta",
+    "ticket_id": "ES-002",
+    "text": "He olvidado mi contraseña y el enlace para restablecerla caducó. Mi cuenta de prueba es de la empresa inventada Faro Azul. Necesito recuperar el acceso."
+  },
+  {
+    "subject": "Error al exportar un informe",
+    "ticket_id": "ES-003",
+    "text": "Desde esta mañana, al pulsar Exportar CSV aparece el error 503. Lo he probado con dos navegadores y ocurre igual en el proyecto ficticio Jardín Lunar."
+  },
+  {
+    "subject": "Propuesta para un evento",
+    "ticket_id": "ES-004",
+    "text": "Organizamos la feria imaginaria Ideas de Cartón y queremos invitar a vuestro equipo a una charla. ¿Con quién podemos hablar sobre esta colaboración?"
+  },
+  {
+    "subject": "Cambiar los datos fiscales",
+    "ticket_id": "ES-005",
+    "text": "Necesito que la próxima factura de nuestra cooperativa ficticia Río de Tinta incluya la nueva dirección fiscal. ¿Cómo actualizo los datos de facturación?"
+  },
+  {
+    "subject": "El código de verificación nunca llega",
+    "ticket_id": "ES-006",
+    "text": "La pantalla de inicio de sesión me pide un código de doble factor, pero no lo recibo. He revisado el correo no deseado y sigo sin poder acceder a mi cuenta de prueba."
+  },
+  {
+    "subject": "La aplicación se cierra al subir un archivo",
+    "ticket_id": "ES-007",
+    "text": "Cada vez que adjunto un PDF de 2 MB, la aplicación se cierra antes de guardar. Trabajo en el espacio de demostración Brisa Violeta. ¿Podéis investigar el fallo?"
+  },
+  {
+    "subject": "Consulta sobre material educativo",
+    "ticket_id": "ES-008",
+    "text": "Somos la asociación ficticia Semillas de Órbita. Buscamos una persona para comentar posibles talleres educativos, sin relación con una cuenta, un pago ni una avería."
+  }
+]

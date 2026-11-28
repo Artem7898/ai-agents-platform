@@ -34,3 +34,6 @@ deploy/gguf/reports/
 /frontend/node_modules/
 /frontend/test-results/
 /frontend/playwright-report/
+
+# Local ticket-demo evidence contains run data; publish reviewed reports separately.
+/demo-evidence/
