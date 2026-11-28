@@ -56,6 +56,11 @@ class EnvSettings(BaseSettings):
     LLM_RESERVATION_OVERHEAD_TOKENS: int = Field(default=512, ge=0, le=8192)
     BILLING_ENABLED: bool = False
     BILLING_MODE: Literal["test", "live"] = "test"
+    DEMO_TRIAGE_ENABLED: bool = False
+    DEMO_TRIAGE_SINK_URL: str = ""
+    DEMO_TRIAGE_SINK_TOKEN: SecretStr | None = None
+    DEMO_TRIAGE_COMMIT_BARRIER_SECONDS: float = Field(default=0, ge=0, le=60)
+    DEMO_TRIAGE_COMMIT_BARRIER_RUN_ID: str = Field(default="", max_length=36)
 
     @field_validator("LLM_SECRET_BINDINGS")
     @classmethod
@@ -93,6 +98,13 @@ LLM_RETRY_BASE_SECONDS = env.LLM_RETRY_BASE_SECONDS
 LLM_RESERVATION_OVERHEAD_TOKENS = env.LLM_RESERVATION_OVERHEAD_TOKENS
 BILLING_ENABLED = env.BILLING_ENABLED
 BILLING_MODE = env.BILLING_MODE
+DEMO_TRIAGE_ENABLED = env.DEMO_TRIAGE_ENABLED
+DEMO_TRIAGE_SINK_URL = env.DEMO_TRIAGE_SINK_URL
+DEMO_TRIAGE_SINK_TOKEN = (
+    env.DEMO_TRIAGE_SINK_TOKEN.get_secret_value() if env.DEMO_TRIAGE_SINK_TOKEN else ""
+)
+DEMO_TRIAGE_COMMIT_BARRIER_SECONDS = env.DEMO_TRIAGE_COMMIT_BARRIER_SECONDS
+DEMO_TRIAGE_COMMIT_BARRIER_RUN_ID = env.DEMO_TRIAGE_COMMIT_BARRIER_RUN_ID
 DEBUG = False
 ALLOWED_HOSTS = env.ALLOWED_HOSTS
 INSTALLED_APPS = [
@@ -116,6 +128,7 @@ INSTALLED_APPS = [
     "src.console",
     "src.workflows",
     "src.runs",
+    "src.triage",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

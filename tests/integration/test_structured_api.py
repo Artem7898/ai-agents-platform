@@ -94,11 +94,12 @@ def test_schema_catalog_requires_token_and_returns_only_public_contract_metadata
 
 def test_catalog_pagination_has_a_bounded_page_size(identity):
     _, client, _ = identity
+    existing_count = len(OutputSchemaRegistry.list())
     for index in range(205):
         OutputSchemaRegistry.register(f"catalog_{index}", 1)(ReviewedV2)
     response = client.get("/api/v1/output-schemas/?limit=10000")
     assert response.status_code == 200
-    assert response.data["count"] == 206
+    assert response.data["count"] == existing_count + 205
     assert len(response.data["results"]) == 200
     assert response.data["next"] is not None
 

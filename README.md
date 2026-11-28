@@ -19,6 +19,10 @@ The [AgentOps console](docs/console.md) at `/console/` adds a session-authentica
 - Author: [Artem7898](https://github.com/Artem7898).
 - Co-author: [alexander-pyrforos](https://github.com/alexander-pyrforos).
 
+## Ticket triage demo
+
+The [ticket triage acceptance scenario](docs/triage-demo.md) connects a local multilingual Ollama model to a Spanish operator review and an idempotent test destination. It includes fictional tickets, a versioned JSON output contract and a controlled worker crash after the destination commits. The operator screen is at `/console/triage/` when the demo is enabled. A real-model run requires downloading and probing the exact model; automated tests use an explicitly identified test provider.
+
 ## Local setup
 
 Install [uv](https://docs.astral.sh/uv/), Node.js 24 and Docker with Compose, then:

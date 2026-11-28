@@ -18,6 +18,7 @@ from .api import (
     OperationsView,
     ToolsView,
 )
+from .triage import TriageConfirmView, TriageRunsView
 
 router = DefaultRouter()
 _PERSONAL_PATHS = {
@@ -86,4 +87,10 @@ urlpatterns = [
     path("dashboard/", DashboardView.as_view(), name="console-dashboard"),
     path("tools/", ToolsView.as_view(), name="console-tools"),
     path("operations/", OperationsView.as_view(), name="console-operations"),
+    path("triage/runs/", TriageRunsView.as_view(), name="console-triage-runs"),
+    path(
+        "triage/runs/<uuid:run_id>/confirm/",
+        TriageConfirmView.as_view(),
+        name="console-triage-confirm",
+    ),
 ] + router.urls

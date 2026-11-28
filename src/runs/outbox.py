@@ -6,7 +6,7 @@ idempotency key supplied by the executor; a process crash cannot roll them back.
 
 import asyncio
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Collection, Coroutine
 from datetime import timedelta
 from typing import Any
 
@@ -34,16 +34,27 @@ def _locked(queryset):
     return queryset.select_for_update()
 
 
-def _claim(batch_size: int) -> list[OutboxMessage]:
+def _run_scope(run_ids: Collection[uuid.UUID | str] | None) -> tuple[uuid.UUID, ...] | None:
+    if run_ids is None:
+        return None
+    # An empty explicit scope must never fall back to claiming every run.
+    return tuple(uuid.UUID(str(run_id)) for run_id in run_ids)
+
+
+def _claim(
+    batch_size: int, run_ids: Collection[uuid.UUID | str] | None = None
+) -> list[OutboxMessage]:
+    scope = _run_scope(run_ids)
     now = timezone.now()
     claimed = []
     with transaction.atomic():
-        messages = _locked(
-            OutboxMessage.objects.filter(
-                Q(status="pending", available_at__lte=now)
-                | Q(status="processing", lease_expires_at__lte=now)
-            ).order_by("available_at", "created_at")
+        query = OutboxMessage.objects.filter(
+            Q(status="pending", available_at__lte=now)
+            | Q(status="processing", lease_expires_at__lte=now)
         )
+        if scope is not None:
+            query = query.filter(run_id__in=scope)
+        messages = _locked(query.order_by("available_at", "created_at"))
         # Do not pre-claim a batch: each command receives a full lease immediately
         # before execution, rather than expiring while waiting behind another run.
         for message in messages[: max(batch_size * 10, 100)]:
@@ -181,10 +192,16 @@ class OutboxPublisher:
 
 class OutboxWorker:
     @staticmethod
-    async def process_next_batch(executor_coroutine: Handler, batch_size: int = 10) -> int:
+    async def process_next_batch(
+        executor_coroutine: Handler,
+        batch_size: int = 10,
+        *,
+        run_ids: Collection[uuid.UUID | str] | None = None,
+    ) -> int:
+        scope = _run_scope(run_ids)
         processed = 0
         for _ in range(batch_size):
-            messages = await sync_to_async(_claim, thread_sensitive=True)(1)
+            messages = await sync_to_async(_claim, thread_sensitive=True)(1, scope)
             if not messages:
                 break
             message = messages[0]
