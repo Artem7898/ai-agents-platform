@@ -1,0 +1,26 @@
+{
+  "faststart": true,
+  "full_decode_passed": true,
+  "atoms": [
+    {
+      "name": "ftyp",
+      "offset": 0,
+      "bytes": 32
+    },
+    {
+      "name": "moov",
+      "offset": 32,
+      "bytes": 72806
+    },
+    {
+      "name": "free",
+      "offset": 72838,
+      "bytes": 8
+    },
+    {
+      "name": "mdat",
+      "offset": 72846,
+      "bytes": 4177337
+    }
+  ]
+}

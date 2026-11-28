@@ -4,6 +4,8 @@ This local demonstration uses eight fictional Spanish tickets, a managed Ollama 
 
 The workflow is `classify → approval → approved → save_ticket`. The condition compares `nodes.approval.result.approved` with literal `true`. A false decision skips the save node. The model has no tools. The save node forwards a trusted, stable key `<run_id>:save_ticket:tool` to the local HTTP destination, which commits a uniquely keyed receipt independently of the workflow checkpoint.
 
+The [video guide with Russian captions](agentops-video-guide.md) shows agent creation, this workflow, Confirmar / Corregir and worker recovery. Its LLM responses are explicitly simulated; it demonstrates the interface and recovery behavior without assessing real-model quality.
+
 ## Local setup
 
 Use an existing active operator account and a PostgreSQL database. The commands do not create users, reset databases, remove volumes or stop unrelated processes. For optional dedicated infrastructure:

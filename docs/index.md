@@ -3,6 +3,7 @@
 Start with the repository [README](https://github.com/Artem7898/ai-agents-platform#readme) or [Russian setup guide](https://github.com/Artem7898/ai-agents-platform/blob/main/README_RU.md).
 
 - [Operations and recovery](operations.md): release, worker, backup and recovery procedures.
+- [AgentOps video guide](agentops-video-guide.md): agent creation and ticket review with Russian captions; explicitly simulated LLM responses and real worker recovery.
 - Generated development API schemas: `/api/v2/docs`.
 - Domain contracts: `src/agents/schemas.py`, `src/workflows/schemas.py`, `src/runs/schemas.py`.
 

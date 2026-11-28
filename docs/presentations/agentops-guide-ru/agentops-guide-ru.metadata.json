@@ -1,0 +1,44 @@
+{
+  "recording": "/workspace/agentops-presentation/raw.webm",
+  "caption_input": "/workspace/agentops-presentation/captions-render.json",
+  "output": "/workspace/agentops-presentation/agentops-guide-ru.mp4",
+  "duration_seconds": 239.56,
+  "raw_duration_seconds": 231.56,
+  "intro": {
+    "title": "AgentOps: создать агента и обработать заявку",
+    "body": "Создание · Workflow · Confirmar / Corregir · Восстановление\nУчебный стенд. Ответы LLM имитируются.",
+    "seconds": 4.0
+  },
+  "outro": {
+    "title": "Один запуск. Одна запись. Решение оператора.",
+    "body": "Демонстрационные ответы LLM · Реальные интерфейс, PostgreSQL и worker\nИнструкция: docs/triage-demo.md",
+    "seconds": 4.0
+  },
+  "width": 1920,
+  "height": 1080,
+  "app_height": 1000,
+  "caption_band_height": 80,
+  "fps": "25/1",
+  "codec": "h264",
+  "pixel_format": "yuv420p",
+  "color_range": "tv",
+  "source_color_range": "pc",
+  "bytes": 4250183,
+  "max_bytes": 29360128,
+  "encoding": {
+    "mode": "crf",
+    "crf": 23,
+    "preset": "medium"
+  },
+  "audio": "none; silent video, no voice-over or TTS",
+  "caption_language": "ru",
+  "caption_count": 30,
+  "external_subtitles": "/workspace/agentops-presentation/agentops-guide-ru.srt",
+  "disclosure": "ДЕМО-СТЕНД · ОТВЕТЫ LLM ИМИТИРУЮТСЯ",
+  "disclosure_location": "bottom of the added caption band, present throughout",
+  "ui_processing": "complete 1920x1000 source frames, no cropping or spatial scaling; color range normalized to limited; padded to 1920x1080",
+  "notes": [
+    "LLM responses in this demonstration are simulated.",
+    "External SRT contains the same captions and optional title-card text; disclosure is burned into the image."
+  ]
+}
