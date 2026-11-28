@@ -53,6 +53,7 @@ jobs:
       - run: uv run --frozen --all-extras pyright
       - run: uv run --frozen --all-extras python manage.py check
       - run: uv run --frozen --all-extras python manage.py makemigrations --check --dry-run
+      - run: mkdir -p demo-evidence
       - run: uv run --frozen --all-extras pytest --basetemp=demo-evidence/pytest --junitxml=demo-evidence/pytest-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
